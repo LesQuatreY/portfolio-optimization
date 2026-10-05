@@ -12,7 +12,8 @@ portfolio-optimization/
     portfolio_analysis.ipynb       Lightweight study entry point
     archive/draft.ipynb            Original notebook, for regression audit
   src/portfolio_lab/
-    config.py                     Immutable asset metadata and study parameters
+    assets.py                     Central ticker catalogue and metadata resolution
+    config.py                     Immutable study parameters and universe selection
     data.py                       Provider protocol, Yahoo/CSV, snapshots, alignment
     currency.py                   Explicit USD-per-EUR conversion
     returns.py                    Price validation and observed interval returns
@@ -65,22 +66,28 @@ Select the **Portfolio Lab** kernel. Run all cells. Automatic execution uses tha
 
 ## Configuration
 
-`load_config()` in `config.py` retains sensible project defaults. The notebook's **User configuration** cell exposes an editable `assets` dictionary and a `leveraged_assets` dictionary. `configure_universe(load_config(project_dir), assets, leveraged_assets)` constructs the single effective immutable configuration passed to every analytical step. Notebook metadata replaces defaults explicitly; changing a ticker never silently inherits metadata from the old instrument. No edits to `src/portfolio_lab/` are needed to change the universe.
+`load_config()` in `config.py` retains sensible project defaults. The notebook's **User configuration** cell contains only an `assets` mapping of display name to ticker and a `leveraged_assets` mapping of name to leverage factor. `configure_universe(load_config(project_dir), assets, leveraged_assets)` resolves the selected tickers into the single effective immutable configuration passed to every analytical step. The notebook intentionally avoids duplicating technical metadata.
 
-Each asset entry supplies `symbol`, `currency`, `return_type`, `instrument` and `distributions`; optional `limitation` and `reference` document the source. Supported return types are `Price Return`, `Total Return`, `Gross Return`, `Net Return` and `Adjusted price`. EUR assets need no FX conversion; USD entries automatically request the configured EURUSD series and convert upstream. Unsupported currencies fail clearly rather than guessing an FX direction.
+Financial metadata is centrally registered in `ASSET_CATALOGUE` in `src/portfolio_lab/assets.py`: symbol, listing currency, instrument, return classification, distribution treatment, limitations and reference URL. Changing a ticker resolves its own metadata; it never inherits the old instrument's metadata. Supported return types are `Price Return`, `Total Return`, `Gross Return`, `Net Return` and `Adjusted price`. EUR assets need no FX conversion; USD entries automatically request the configured EURUSD series and convert upstream. Yahoo's existing provider uses adjusted prices only for `Adjusted price`; gross-return index levels are not dividend-adjusted again. Unsupported currencies fail explicitly.
 
 For example, edit the notebook configuration before its `configure_universe(...)` call:
 
 ```python
 del assets["Dow Jones"]
-assets["MSCI World"] = dict(
-    symbol="IWDA.AS", currency="EUR", return_type="Adjusted price",
-    instrument="iShares Core MSCI World UCITS ETF",
-    distributions="Accumulating ETF; income reinvested within the fund",
-)
-assets["Apple"]["symbol"] = "AAPL"  # Also update metadata when changing exposure.
+assets["MSCI World"] = "IWDA.AS"  # Already registered; Amsterdam EUR listing.
 config = configure_universe(load_config(project_dir), assets, leveraged_assets)
 ```
+
+Selecting, renaming, adding or removing a registered ticker needs no package edits. Unknown symbols raise `Unknown asset symbol 'XYZ'. Register its metadata in src/portfolio_lab/assets.py.` before downloading data. To register a new symbol, add an `Asset(...)` entry to the catalogue's tuple in `assets.py`, verifying its listing currency, return treatment and source first. For example, the existing CAC entry is:
+
+```python
+Asset("CAC 40", "PX1GR.PA", "CAC 40 Gross Return Index", "EUR", "Gross Return",
+      "Gross dividends reinvested in index levels; no additional dividend adjustment",
+      "Yahoo daily history has missing observations; inspect raw valid end and missing counts before interpreting coverage.",
+      reference="https://live.euronext.com/en/product/indices/QS0011131834-XPAR"),
+```
+
+The catalogue and its entries are immutable at runtime. New registration happens in the package, keeping the normal notebook workflow short and the metadata auditable. IWDA's listing currency is EUR even though the fund's base currency is USD; this does not imply currency hedging. Its listing and accumulating treatment are documented by [iShares](https://www.ishares.com/uk/individual/en/products/251882/ishares-core-msci-world-ucits-etf-usd-acc).
 
 Run **all cells** after an edit so no old notebook outputs remain in memory. To remove Apple, also remove `leveraged_assets["Apple"]`; otherwise validation explains that its leveraged underlying is missing before any download starts. The exported `effective-config.json` records the exact notebook configuration used, including assets, leverage and study parameters. The optional archived-engine regression script reads this export rather than independently reloading default assets.
 

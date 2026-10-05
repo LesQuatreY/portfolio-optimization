@@ -5,16 +5,7 @@ from pathlib import Path
 import math
 
 
-@dataclass(frozen=True)
-class Asset:
-    name: str
-    symbol: str
-    instrument: str
-    currency: str
-    return_type: str
-    distributions: str
-    limitation: str = ""
-    reference: str = ""
+from .assets import Asset, resolve_assets
 
 
 @dataclass(frozen=True)
@@ -86,42 +77,21 @@ class Config:
 
 def load_config(project_dir: Path = Path(".")) -> Config:
     """Defaults use verified TR benchmarks when accessible; no automatic fallback."""
-    return Config(cache_dir=Path(project_dir) / ".cache/market", output_dir=Path(project_dir) / "outputs", assets=(
-        Asset("Apple", "AAPL", "Primary US equity", "USD", "Adjusted price",
-              "Yahoo split/dividend adjustment; reinvestment proxy before investor tax",
-              "Adjusted prices are a vendor proxy, not an independently audited TR index."),
-        Asset("Nasdaq 100", "QQQ", "Invesco QQQ ETF; Nasdaq-100 exposure proxy", "USD", "Adjusted price",
-              "Yahoo dividend/split adjustments; distributions assumed reinvested",
-              "Exact Nasdaq-100 TR unavailable from tested Yahoo ^XNDX. QQQ is an ETF proxy with fund fees/tracking differences, not the gross TR benchmark.",
-              "https://www.invesco.com/qqq-etf/en/home.html"),
-        Asset("S&P 500", "^SP500TR", "S&P 500 Total Return index", "USD", "Gross Return",
-              "Gross dividends reinvested by index methodology", reference="https://www.spglobal.com/spdji/en/indices/equity/sp-500/"),
-        Asset("Dow Jones", "DIA", "State Street SPDR Dow Jones Industrial Average ETF proxy", "USD", "Adjusted price",
-              "Yahoo dividend/split adjustments; distributions assumed reinvested",
-              "Exact Dow Jones TR unavailable from tested Yahoo ^DJITR. DIA is an ETF proxy with fund fees/tracking differences, not the gross TR benchmark.",
-              "https://www.ssga.com/us/en/individual/etfs/state-street-spdr-dow-jones-industrial-average-etf-trust-dia"),
-        Asset("CAC 40", "PX1GR.PA", "CAC 40 Gross Return Index", "EUR", "Gross Return",
-              "Gross dividends reinvested in index levels; no additional dividend adjustment",
-              "Yahoo daily history has missing observations; inspect raw valid end and missing counts before interpreting coverage.",
-              reference="https://live.euronext.com/en/product/indices/QS0011131834-XPAR"),
-        Asset("Gold", "GC=F", "Yahoo continuous COMEX gold futures quotation", "USD", "Price Return",
-              "No dividends; quoted futures price changes only",
-              "Not spot gold or an investable futures total-return index: roll, collateral yield and contract stitching are unmodeled."),
-    ))
+    assets = {
+        "Apple": "AAPL", "Nasdaq 100": "QQQ", "S&P 500": "^SP500TR",
+        "Dow Jones": "DIA", "CAC 40": "PX1GR.PA", "Gold": "GC=F",
+    }
+    return Config(cache_dir=Path(project_dir) / ".cache/market",
+                  output_dir=Path(project_dir) / "outputs", assets=resolve_assets(assets))
 
 
-def configure_universe(config: Config, assets: Mapping[str, Mapping[str, str]],
-                       leverage: Mapping[str, float] | None = None) -> Config:
-    """Build the single effective study config from explicit notebook metadata.
+def configure_universe(config: Config, assets: Mapping[str, str],
+                       leverage: Mapping[str, float] | None = None, *,
+                       catalogue: Mapping[str, Asset] | None = None) -> Config:
+    """Resolve notebook name -> symbol selections into the full study config.
 
-    Each mapping value supplies Asset fields except name, which is its key.
-    No metadata from a previous ticker is silently carried over.
+    Metadata comes only from the catalogue; no guessing or ticker fallback.
+    An explicit catalogue can be injected for a custom provider or offline fixtures.
     """
-    configured = []
-    for name, metadata in assets.items():
-        try:
-            configured.append(Asset(name=name, **metadata))
-        except TypeError as exc:
-            raise ValueError(f"Invalid metadata for asset '{name}': {exc}") from exc
-    return replace(config, assets=tuple(configured),
+    return replace(config, assets=resolve_assets(assets, catalogue=catalogue),
                    leverage=config.leverage if leverage is None else tuple(leverage.items()))

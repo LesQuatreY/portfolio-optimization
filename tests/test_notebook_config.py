@@ -1,11 +1,12 @@
 """Notebook universe changes propagate through the same effective configuration."""
-from dataclasses import asdict, replace
+from dataclasses import replace
 from pathlib import Path
 import json
 import numpy as np
 import pandas as pd
 import pytest
 from portfolio_lab.config import configure_universe, load_config
+from portfolio_lab.assets import ASSET_CATALOGUE, Asset
 from portfolio_lab.data import YahooProvider, load_market_data, study_coverage
 from portfolio_lab.leverage import add_leverage
 from portfolio_lab.metrics import compute_asset_metrics
@@ -27,15 +28,56 @@ def test_notebook_defaults_match_package_and_can_be_overridden():
 
 
 def test_missing_leveraged_underlying_fails_before_download():
-    assets = {asset.name: {k: v for k, v in asdict(asset).items() if k != "name"}
+    assets = {asset.name: asset.symbol
               for asset in load_config().assets if asset.name != "Apple"}
     with pytest.raises(ValueError, match="Apple.*not in the configured asset universe"):
         configure_universe(load_config(), assets)
 
 
-def test_incomplete_metadata_is_informative(config):
-    with pytest.raises(ValueError, match="Invalid metadata for asset 'New'"):
-        configure_universe(config, {"New": {"symbol": "NEW"}})
+def test_unknown_symbol_is_informative(config):
+    with pytest.raises(ValueError, match="Unknown asset symbol 'NEW'.*assets.py"):
+        configure_universe(config, {"New": "NEW"})
+
+
+@pytest.mark.parametrize("symbol,currency,return_type", [
+    ("AAPL", "USD", "Adjusted price"), ("QQQ", "USD", "Adjusted price"),
+    ("^SP500TR", "USD", "Gross Return"), ("DIA", "USD", "Adjusted price"),
+    ("PX1GR.PA", "EUR", "Gross Return"), ("GC=F", "USD", "Price Return"),
+    ("IWDA.AS", "EUR", "Adjusted price"),
+])
+def test_catalogue_recovers_financial_metadata(symbol, currency, return_type):
+    cfg = configure_universe(load_config(), {"My exposure": symbol}, {})
+    assert cfg.assets == (replace(ASSET_CATALOGUE[symbol], name="My exposure"),)
+    assert cfg.assets[0].currency == currency
+    assert cfg.assets[0].return_type == return_type
+
+
+def test_add_registered_asset_preserves_existing_metadata():
+    original = load_config()
+    assets = {asset.name: asset.symbol for asset in original.assets}
+    assets["MSCI World"] = "IWDA.AS"
+    cfg = configure_universe(original, assets)
+    assert cfg.assets[:-1] == original.assets
+    assert cfg.assets[-1] == ASSET_CATALOGUE["IWDA.AS"]
+    assert cfg.leverage == original.leverage
+
+
+@pytest.mark.parametrize("assets", [{"New": {"symbol": "AAPL"}}, {"": "AAPL"}, {"New": ""}])
+def test_invalid_simple_mapping_fails_explicitly(assets):
+    with pytest.raises(ValueError, match="nonempty display names to symbol strings"):
+        configure_universe(load_config(), assets, {})
+
+
+def test_identical_effective_universe_preserves_optimization(config, portfolio_prices):
+    catalogue = {asset.symbol: asset for asset in config.assets}
+    resolved = configure_universe(config, {asset.name: asset.symbol for asset in config.assets},
+                                  {}, catalogue=catalogue)
+    assert resolved == config
+    before = optimize_frontier(portfolio_prices, config)
+    after = optimize_frontier(portfolio_prices, resolved)
+    pd.testing.assert_frame_equal(before.covariance, after.covariance, check_exact=True)
+    pd.testing.assert_frame_equal(before.weights, after.weights, check_exact=True)
+    pd.testing.assert_frame_equal(before.frontier, after.frontier, check_exact=True)
 
 
 def test_universe_propagates_to_data_fx_leverage_optimization_and_report(config, portfolio_prices, tmp_path):
@@ -52,13 +94,12 @@ def test_universe_propagates_to_data_fx_leverage_optimization_and_report(config,
                      "EURUSD=X": pd.Series(2., index=dates)}
             return paths[asset.symbol].rename(asset.name)
 
-    assets = {
-        "A": dict(symbol="REPLACED", currency="USD", return_type="Adjusted price",
-                  instrument="replacement equity", distributions="reinvested"),
-        "New": dict(symbol="NEW", currency="EUR", return_type="Gross Return",
-                    instrument="new EUR index", distributions="gross dividends reinvested"),
+    catalogue = {
+        "REPLACED": Asset("Replacement", "REPLACED", "replacement equity", "USD", "Adjusted price", "reinvested"),
+        "NEW": Asset("New", "NEW", "new EUR index", "EUR", "Gross Return", "gross dividends reinvested"),
     }
-    cfg = configure_universe(replace(config, output_dir=tmp_path), assets, {"A": 1.5})
+    cfg = configure_universe(replace(config, output_dir=tmp_path),
+                             {"A": "REPLACED", "New": "NEW"}, {"A": 1.5}, catalogue=catalogue)
     data = load_market_data(cfg, Provider())
     assert calls == ["REPLACED", "NEW", "EURUSD=X"]
     assert list(data.common) == ["A", "New"]

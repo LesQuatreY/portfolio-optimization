@@ -21,74 +21,29 @@ portfolio-optimization/
     validation-summary.md
 ```
 
-## B. Exact notebook configuration cell
+## B. Exact notebook configuration cell (updated after catalogue cleanup)
 
 ```python
-# Study universe: edit these metadata entries, then Run All.
-assets = {'Apple': {'symbol': 'AAPL',
-           'instrument': 'Primary US equity',
-           'currency': 'USD',
-           'return_type': 'Adjusted price',
-           'distributions': 'Yahoo split/dividend adjustment; reinvestment proxy before investor tax',
-           'limitation': 'Adjusted prices are a vendor proxy, not an independently audited TR index.',
-           'reference': ''},
- 'Nasdaq 100': {'symbol': 'QQQ',
-                'instrument': 'Invesco QQQ ETF; Nasdaq-100 exposure proxy',
-                'currency': 'USD',
-                'return_type': 'Adjusted price',
-                'distributions': 'Yahoo dividend/split adjustments; distributions assumed reinvested',
-                'limitation': 'Exact Nasdaq-100 TR unavailable from tested Yahoo ^XNDX. QQQ is an ETF proxy '
-                              'with fund fees/tracking differences, not the gross TR benchmark.',
-                'reference': 'https://www.invesco.com/qqq-etf/en/home.html'},
- 'S&P 500': {'symbol': '^SP500TR',
-             'instrument': 'S&P 500 Total Return index',
-             'currency': 'USD',
-             'return_type': 'Gross Return',
-             'distributions': 'Gross dividends reinvested by index methodology',
-             'limitation': '',
-             'reference': 'https://www.spglobal.com/spdji/en/indices/equity/sp-500/'},
- 'Dow Jones': {'symbol': 'DIA',
-               'instrument': 'State Street SPDR Dow Jones Industrial Average ETF proxy',
-               'currency': 'USD',
-               'return_type': 'Adjusted price',
-               'distributions': 'Yahoo dividend/split adjustments; distributions assumed reinvested',
-               'limitation': 'Exact Dow Jones TR unavailable from tested Yahoo ^DJITR. DIA is an ETF proxy '
-                             'with fund fees/tracking differences, not the gross TR benchmark.',
-               'reference': 'https://www.ssga.com/us/en/individual/etfs/state-street-spdr-dow-jones-industrial-average-etf-trust-dia'},
- 'CAC 40': {'symbol': 'PX1GR.PA',
-            'instrument': 'CAC 40 Gross Return Index',
-            'currency': 'EUR',
-            'return_type': 'Gross Return',
-            'distributions': 'Gross dividends reinvested in index levels; no additional dividend adjustment',
-            'limitation': 'Yahoo daily history has missing observations; inspect raw valid end and missing '
-                          'counts before interpreting coverage.',
-            'reference': 'https://live.euronext.com/en/product/indices/QS0011131834-XPAR'},
- 'Gold': {'symbol': 'GC=F',
-          'instrument': 'Yahoo continuous COMEX gold futures quotation',
-          'currency': 'USD',
-          'return_type': 'Price Return',
-          'distributions': 'No dividends; quoted futures price changes only',
-          'limitation': 'Not spot gold or an investable futures total-return index: roll, collateral yield '
-                        'and contract stitching are unmodeled.',
-          'reference': ''}}
+assets = {
+    "Apple": "AAPL",
+    "Nasdaq 100": "QQQ",
+    "S&P 500": "^SP500TR",
+    "Dow Jones": "DIA",
+    "CAC 40": "PX1GR.PA",
+    "Gold": "GC=F",
+}
 
-# Leverage entries must reference names present in assets.
-leveraged_assets = {"Apple": 1.5, "Nasdaq 100": 2.0}
-
-# Examples (uncomment, adjust metadata, then Run All):
-# del assets["Dow Jones"]
-# assets["Apple"]["symbol"] = "AAPL"
-# assets["MSCI World"] = dict(symbol="IWDA.AS", currency="EUR",
-#     return_type="Adjusted price", instrument="iShares Core MSCI World UCITS ETF",
-#     distributions="Accumulating ETF; income reinvested within the fund")
-# If removing Apple: del assets["Apple"]; del leveraged_assets["Apple"]
+leveraged_assets = {
+    "Apple": 1.5,
+    "Nasdaq 100": 2.0,
+}
 
 config = configure_universe(load_config(project_dir), assets, leveraged_assets)
-# Optional study overrides, applied to the same effective configuration:
+# Optional study overrides:
 # config = replace(config, risk_free_rate=0.02, frontier_points=75)
 ```
 
-Every stage consumes this config. Removing an underlying without removing its leverage entry raises a clear validation error before any download. Metadata is explicit; no previous ticker metadata is silently inherited. The regression script reads the executed effective-config.json export.
+Every stage consumes this config. Removing an underlying without removing its leverage entry raises a clear validation error before any download. Metadata is resolved centrally from src/portfolio_lab/assets.py; no previous ticker metadata is silently inherited. The regression script reads the executed effective-config.json export.
 
 ## C. Provenance
 
@@ -342,3 +297,8 @@ Equal-input engine regression passed; source/FX methodological changes are inten
 ```
 
 The archived engine's 19 validations pass on exactly the new exported EUR input series. Changes in investment metrics come from the benchmark and study window, not a rewritten portfolio engine.
+
+
+## Catalogue cleanup verification
+
+79 tests pass. The notebook executes all 8 code cells in a fresh kernel with zero errors. The six default assets and all study parameters remain identical. Exact before/after comparisons of portfolio results, weights, asset metrics, frontier, covariance and EUR returns find a maximum numerical difference of 0.0. See `catalogue-regression.json` for machine-readable evidence. The earlier CAC source audit and numerical tables above remain applicable.
