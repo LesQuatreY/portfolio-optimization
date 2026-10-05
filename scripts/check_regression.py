@@ -4,12 +4,16 @@ import json
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
-from portfolio_lab.config import load_config
+from portfolio_lab.config import Asset, Config
 from portfolio_lab.metrics import compute_asset_metrics
 from portfolio_lab.leverage import leveraged_name
 
 root = Path(__file__).resolve().parents[1]
-config = load_config()
+settings = json.loads((root / "outputs/effective-config.json").read_text(encoding="utf-8"))
+config = Config(**{**settings, "assets": tuple(Asset(**asset) for asset in settings["assets"]),
+                   "leverage": tuple(tuple(entry) for entry in settings["leverage"]),
+                   "targets": tuple(tuple(entry) for entry in settings["targets"]),
+                   "cache_dir": Path(settings["cache_dir"]), "output_dir": Path(settings["output_dir"])})
 notebook = json.loads((root / "notebooks/archive/draft.ipynb").read_text(encoding="utf-8"))
 prices = pd.read_csv(root / "outputs/eur-prices.csv", index_col=0, parse_dates=True)
 namespace = dict(

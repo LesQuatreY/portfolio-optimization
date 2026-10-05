@@ -1,5 +1,6 @@
 """Persist independent review evidence and enforce numerical sanity checks."""
 from pathlib import Path
+from dataclasses import asdict
 import json
 import numpy as np
 import pandas as pd
@@ -19,6 +20,8 @@ def validate_study(prices, optimization, config) -> dict:
         w = result["weights"]
         if w is None:
             continue
+        if not result["Success"]:
+            raise RuntimeError(f"{name}: optimized portfolio reports failure.")
         weight_sums[name] = float(w.sum())
         minimum_weight = min(minimum_weight, float(w.min()))
         if abs(w.sum() - 1) > 1e-8 or w.min() < -1e-8 or w.max() > 1 + 1e-8:
@@ -37,19 +40,28 @@ def validate_study(prices, optimization, config) -> dict:
     largest_violation = max([0., *violations])
     if finite_count or eigenvalue < -1e-10 or largest_violation > config.tolerance:
         raise RuntimeError("Return finiteness, covariance PSD or risk ceiling validation failed.")
+    final_attempts = optimization.solver_log.groupby("Portfolio", sort=False).tail(1)
     return {"portfolio_weight_sums": weight_sums, "minimum_portfolio_weight": minimum_weight,
+            "maximum_weight_sum_error": max(abs(value - 1) for value in weight_sums.values()),
             "largest_volatility_ceiling_violation": largest_violation,
             "nonfinite_final_returns": finite_count, "common_observations": len(prices),
             "return_observations": len(returns), "common_start": str(prices.index[0].date()),
             "common_end": str(prices.index[-1].date()), "covariance_minimum_eigenvalue": eigenvalue,
             "solver_attempts": len(optimization.solver_log),
+            "successful_solver_attempts": int(optimization.solver_log["Success"].sum()),
+            "optimizer_solve_count": len(final_attempts),
+            "optimizer_success_count": int(final_attempts["Success"].sum()),
             "unsuccessful_solver_attempts": int((~optimization.solver_log["Success"]).sum())}
 
 
 def write_review_outputs(data, prices, stats, diagnostics, optimization, config, directory: Path | None = None):
     directory = Path(config.output_dir if directory is None else directory)
     directory.mkdir(parents=True, exist_ok=True)
+    (directory / "effective-config.json").write_text(
+        json.dumps(asdict(config), indent=2, ensure_ascii=False, default=str), encoding="utf-8")
     sanity = validate_study(prices, optimization, config)
+    from .data import study_coverage
+    coverage = study_coverage(data, config)
     provenance = data.provenance.copy()
     for name, factor in config.leverage:
         from .leverage import leveraged_name
@@ -82,9 +94,12 @@ def write_review_outputs(data, prices, stats, diagnostics, optimization, config,
     for name, table in tables.items():
         table.to_csv(directory / f"{name}.csv", float_format="%.17g")
     (directory / "sanity-checks.json").write_text(json.dumps(sanity, indent=2, ensure_ascii=False), encoding="utf-8")
+    (directory / "study-coverage.json").write_text(json.dumps(coverage, indent=2, ensure_ascii=False), encoding="utf-8")
     sections = ["# Executed study review", "All economic series are normalized to EUR before returns and covariance. Synthetic raw observations describe the constructed native NAV over the study interval; their symbols identify the underlying source."]
     for name, table in tables.items():
-        sections.extend([f"## {name}", "```text\n" + table.to_string() + "\n```"])
+        rendered = "\n".join(line.rstrip() for line in table.to_string().splitlines())
+        sections.extend([f"## {name}", "```text\n" + rendered + "\n```"])
     sections.extend(["## Numerical sanity checks", "```json\n" + json.dumps(sanity, indent=2) + "\n```"])
+    sections.extend(["## Historical coverage", "```json\n" + json.dumps(coverage, indent=2) + "\n```"])
     (directory / "review.md").write_text("\n\n".join(sections), encoding="utf-8")
     return sanity

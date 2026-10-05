@@ -1,5 +1,6 @@
 """One immutable, explicit configuration for the entire study."""
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from collections.abc import Mapping
 from pathlib import Path
 import math
 
@@ -14,7 +15,6 @@ class Asset:
     distributions: str
     limitation: str = ""
     reference: str = ""
-    usable_start: str | None = None
 
 
 @dataclass(frozen=True)
@@ -45,11 +45,8 @@ class Config:
         from datetime import date
         try:
             date.fromisoformat(self.end)
-            for asset in self.assets:
-                if asset.usable_start is not None:
-                    date.fromisoformat(asset.usable_start)
         except (TypeError, ValueError) as exc:
-            raise ValueError("Exclusive end and asset usable-start dates must use ISO YYYY-MM-DD.") from exc
+            raise ValueError("Exclusive end must use ISO YYYY-MM-DD.") from exc
         names = [a.name for a in self.assets]
         if not names or len(set(names)) != len(names) or len({a.symbol for a in self.assets}) != len(names):
             raise ValueError("Assets must have distinct nonempty names and symbols.")
@@ -72,7 +69,10 @@ class Config:
         if len(dict(self.leverage)) != len(self.leverage):
             raise ValueError("Duplicate leveraged underlying.")
         for name, factor in self.leverage:
-            if name not in names or not math.isfinite(factor) or factor <= 0:
+            if name not in names:
+                raise ValueError(f"Leveraged underlying '{name}' is not in the configured asset universe. "
+                                 "Restore the asset or remove its leverage entry.")
+            if not math.isfinite(factor) or factor <= 0:
                 raise ValueError(f"Invalid leverage for {name}.")
         labels = [f"{name} x{factor:g}" for name, factor in self.leverage]
         if len(set(names + labels)) != len(names + labels):
@@ -100,11 +100,28 @@ def load_config(project_dir: Path = Path(".")) -> Config:
               "Yahoo dividend/split adjustments; distributions assumed reinvested",
               "Exact Dow Jones TR unavailable from tested Yahoo ^DJITR. DIA is an ETF proxy with fund fees/tracking differences, not the gross TR benchmark.",
               "https://www.ssga.com/us/en/individual/etfs/state-street-spdr-dow-jones-industrial-average-etf-trust-dia"),
-        Asset("CAC 40", "CACC.PA", "Amundi CAC 40 UCITS ETF Acc; FR0013380607 proxy", "EUR", "Adjusted price",
-              "Accumulating share class reinvests within fund; Yahoo adjusted close",
-              "Exact CAC 40 GR unavailable from tested Yahoo ^PX1GR. ETF proxy includes fees/tracking effects. Vendor history before issuer-reported 2019-09-05 share-class creation is excluded from the study; lineage discrepancy unresolved.",
-              "https://www.amundietf.fr/pdfDocuments/monthly-factsheet/FR0013380607/FRA/FRA/RETAIL/ETF/20251130", usable_start="2019-09-05"),
+        Asset("CAC 40", "PX1GR.PA", "CAC 40 Gross Return Index", "EUR", "Gross Return",
+              "Gross dividends reinvested in index levels; no additional dividend adjustment",
+              "Yahoo daily history has missing observations; inspect raw valid end and missing counts before interpreting coverage.",
+              reference="https://live.euronext.com/en/product/indices/QS0011131834-XPAR"),
         Asset("Gold", "GC=F", "Yahoo continuous COMEX gold futures quotation", "USD", "Price Return",
               "No dividends; quoted futures price changes only",
               "Not spot gold or an investable futures total-return index: roll, collateral yield and contract stitching are unmodeled."),
     ))
+
+
+def configure_universe(config: Config, assets: Mapping[str, Mapping[str, str]],
+                       leverage: Mapping[str, float] | None = None) -> Config:
+    """Build the single effective study config from explicit notebook metadata.
+
+    Each mapping value supplies Asset fields except name, which is its key.
+    No metadata from a previous ticker is silently carried over.
+    """
+    configured = []
+    for name, metadata in assets.items():
+        try:
+            configured.append(Asset(name=name, **metadata))
+        except TypeError as exc:
+            raise ValueError(f"Invalid metadata for asset '{name}': {exc}") from exc
+    return replace(config, assets=tuple(configured),
+                   leverage=config.leverage if leverage is None else tuple(leverage.items()))

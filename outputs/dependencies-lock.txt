@@ -71,8 +71,7 @@ peewee==4.5.2
 pillow==12.3.0
 platformdirs==4.12.3
 pluggy==1.6.0
-# Editable install with no version control (portfolio-lab==0.1.0)
--e c:\users\tangu\documents\projet perso\trading\draft
+-e git+https://github.com/LesQuatreY/portfolio-optimization.git@4f6d8283baff20fbfbaf39acde870c11dd3116c7#egg=portfolio_lab
 prometheus_client==0.26.0
 prompt_toolkit==3.0.53
 protobuf==7.36.2

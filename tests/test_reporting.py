@@ -6,13 +6,14 @@ from portfolio_lab.reporting import write_review_outputs
 from test_data import ToyProvider
 
 
-def test_usable_start_retains_raw_provenance(config):
-    second = replace(config.assets[1], usable_start="2020-01-03")
-    data = load_market_data(replace(config, assets=(config.assets[0], second)), ToyProvider())
-    assert str(data.common.index[0].date()) == "2020-01-03"
-    assert data.provenance.loc["B", "Raw observations"] == 4
-    assert data.provenance.loc["B", "Pre-usable source observations excluded"] == 1
-    assert str(data.provenance.loc["B", "Raw start date"].date()) == "2020-01-01"
+def test_coverage_reports_observed_dates(config):
+    from portfolio_lab.data import study_coverage
+    data = load_market_data(config, ToyProvider())
+    coverage = study_coverage(data, config)
+    assert coverage["common_start"] == "2020-01-01"
+    assert coverage["common_observations"] == 4
+    assert coverage["raw_start_limiting_assets"] == ["A", "B"]
+    assert not coverage["first_common_date_delayed_by_calendar"]
 
 
 def test_review_exports_independent_checks(config, portfolio_prices, tmp_path):

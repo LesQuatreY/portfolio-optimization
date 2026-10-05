@@ -7,7 +7,7 @@ The notebook is an orchestration layer. Configuration, data validation, FX norma
 ## Repository
 
 ```text
-Draft/
+portfolio-optimization/
   notebooks/
     portfolio_analysis.ipynb       Lightweight study entry point
     archive/draft.ipynb            Original notebook, for regression audit
@@ -65,7 +65,26 @@ Select the **Portfolio Lab** kernel. Run all cells. Automatic execution uses tha
 
 ## Configuration
 
-`load_config()` in `config.py` is the only default configuration. The notebook can explicitly use `dataclasses.replace(config, ...)` to change study parameters. Configure assets (symbols, currency, instrument and return type), leverage, target volatility profiles, risk-free rate, trading-days convention, frontier resolution, provider, snapshot location and exclusive end date here. The implementation currently supports EUR base currency and EUR/USD asset quotes, rejecting unsupported currencies rather than inferring a conversion. The recorded end date is exclusive and deliberately excludes the current incomplete session.
+`load_config()` in `config.py` retains sensible project defaults. The notebook's **User configuration** cell exposes an editable `assets` dictionary and a `leveraged_assets` dictionary. `configure_universe(load_config(project_dir), assets, leveraged_assets)` constructs the single effective immutable configuration passed to every analytical step. Notebook metadata replaces defaults explicitly; changing a ticker never silently inherits metadata from the old instrument. No edits to `src/portfolio_lab/` are needed to change the universe.
+
+Each asset entry supplies `symbol`, `currency`, `return_type`, `instrument` and `distributions`; optional `limitation` and `reference` document the source. Supported return types are `Price Return`, `Total Return`, `Gross Return`, `Net Return` and `Adjusted price`. EUR assets need no FX conversion; USD entries automatically request the configured EURUSD series and convert upstream. Unsupported currencies fail clearly rather than guessing an FX direction.
+
+For example, edit the notebook configuration before its `configure_universe(...)` call:
+
+```python
+del assets["Dow Jones"]
+assets["MSCI World"] = dict(
+    symbol="IWDA.AS", currency="EUR", return_type="Adjusted price",
+    instrument="iShares Core MSCI World UCITS ETF",
+    distributions="Accumulating ETF; income reinvested within the fund",
+)
+assets["Apple"]["symbol"] = "AAPL"  # Also update metadata when changing exposure.
+config = configure_universe(load_config(project_dir), assets, leveraged_assets)
+```
+
+Run **all cells** after an edit so no old notebook outputs remain in memory. To remove Apple, also remove `leveraged_assets["Apple"]`; otherwise validation explains that its leveraged underlying is missing before any download starts. The exported `effective-config.json` records the exact notebook configuration used, including assets, leverage and study parameters. The optional archived-engine regression script reads this export rather than independently reloading default assets.
+
+Use `dataclasses.replace(config, ...)` in the same cell for target volatility profiles, risk-free rate, trading-days convention, frontier resolution, provider, snapshot location and exclusive end date. The recorded end date remains exclusive and deliberately excludes the current incomplete session.
 
 The default six economic exposures originate in the old notebook: Apple, Nasdaq 100, S&P 500, Dow Jones, CAC 40 and gold. AAPL remains the primary US listing. Apple x1.5 and Nasdaq 100 x2 replace their unleveraged exposures in the optimization universe when `include_leveraged_in_frontier=True`; both versions still appear in asset statistics. Turning the switch off changes only the optimization universe.
 
@@ -152,12 +171,16 @@ This frontier maximizes realized growth in-sample and can be sensitive to the hi
 
 ## Review evidence and regression
 
-`outputs/review.md` prints provenance, real FX samples, asset performance, all optimized portfolios and full weights, all frontier points, exact-risk asset dominance, solver attempts and numerical sanity checks. Corresponding CSVs retain precision and allow independent review. `sanity-checks.json` contains all weight sums, maximum risk-ceiling violation, minimum weight, invalid return count, common dates/count and the covariance minimum eigenvalue. Charts and the fully executed notebook are also saved.
+`outputs/review.md` prints provenance, real FX samples, asset performance, all optimized portfolios and full weights, all frontier points, exact-risk asset dominance, solver attempts and numerical sanity checks. Corresponding CSVs retain precision and allow independent review. `sanity-checks.json` contains all weight sums and their maximum error, maximum risk-ceiling violation, minimum weight, invalid return count, common dates/count, covariance minimum eigenvalue and solver success counts. `study-coverage.json` distinguishes the latest raw-asset start, EUR-normalized availability, FX limitations and any delay from the intersection of observed calendars. Charts and the fully executed notebook are also saved.
 
 `pytest` covers deterministic schema/calendar rejection, availability metadata, FX direction and independent FX moves, returns without filling, leverage wipeout and pre-alignment compounding, independent metric expected values, analytic minimum-risk weights, independent portfolio compounding/risk, infeasible targets, universe selection and Sharpe with negative excess returns. Regression tests extract and execute only the original notebook's pure leverage and performance functions on identical inputs: those calculations must agree. They do not execute the original network cells.
 
 After running the notebook, `.\.venv\Scripts\python.exe scripts/check_regression.py` also executes the archived optimization/target cells on exactly the same exported EUR prices. It validates the archived safeguards and compares portfolio metrics/weights with the new engine. `outputs/engine-regression.csv` records the differences; this comparison deliberately excludes source/FX changes.
 
-For this run, Yahoo returned usable `^SP500TR`, but no usable history for the tested `^XNDX`, `^DJITR` and `^PX1GR` symbols (see `outputs/benchmark-availability.log`). Defaults explicitly select QQQ, DIA and CACC.PA as adjusted/accumulating ETF proxies. The absence of those tested symbols does not prove that all Yahoo spellings or other providers lack TR data. CACC.PA history starts on 2018-12-13 in Yahoo, while the cited November 2025 Amundi factsheet lists a share-class creation date of 2019-09-05. Raw history is retained for audit, but `Asset.usable_start="2019-09-05"` excludes the earlier observations from the default study. The provenance table records both raw availability and the excluded count. The fund lineage discrepancy remains unresolved; the conservative exclusion prevents these observations from influencing reported metrics.
+The CAC 40 uses **`PX1GR.PA`**, Yahoo's actual CAC 40 Gross Return Index in EUR, with gross dividends already reinvested in the index level. Its available raw history starts on 1987-12-31. It is classified as `Gross Return`, so the provider requests `auto_adjust=False`: no dividend adjustment or FX conversion is added. There is no ETF-inception filter. The actual raw counts and end dates are measured at execution; the exclusive end remains unchanged, so this run excludes the 2026-10-05 session.
+
+The live Yahoo source audit found **7,076 valid completed-session CAC closes ending on 2015-12-18**, followed by missing closes and an isolated 2026-10-05 quote when the current session is included. A first/last date and a nonmissing count alone can conceal that gap: `keepna=True` exposes 2,930 missing daily rows within the requested historical range. `outputs/cac-source-audit.log` records both bounded/unbounded requests and a recent-period request that returns no usable history. No prices are filled and no alternative series is silently substituted. Consequently, the executed common study is **2003-12-01 through 2015-12-18, 2,970 price observations**. EURUSD availability determines the common start; Gold has the latest raw asset start (2000-08-30), and CAC 40 determines the common end. This extends the beginning and observation count relative to the previous 2019-09-05 through 2026-10-02 study (1,763 observations), but loses its recent coverage. A complete updated CAC GR history requires a better source or corrected Yahoo data.
+
+S&P 500 likewise uses a genuine gross-return benchmark, `^SP500TR`. QQQ and DIA remain explicit adjusted ETF proxies for the Nasdaq-100 and Dow Jones exposures; tested Yahoo `^XNDX` and `^DJITR` histories were unavailable. Those tested symbols do not establish that every Yahoo spelling or another provider lacks TR data. The current benchmark availability and provenance reports show the actual configured sources.
 
 Architectural changes alone preserve formulas. Methodological changes intentionally alter final results: dividend-inclusive benchmark/proxy selection, EUR translation, available histories/common calendar and explicit unlevered FX for USD synthetic products. No assertion requires new investment metrics to match the old mixed-currency price-index study. The detailed run evidence describes any inaccessible benchmark and selected proxy without concealing the exposure change.

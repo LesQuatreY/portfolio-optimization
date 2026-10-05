@@ -134,9 +134,6 @@ def load_market_data(config: Config, provider: Provider | None = None) -> Market
         if (fx.index >= pd.Timestamp(config.end)).any():
             raise ValueError("FX history extends beyond the exclusive configured end date.")
     normalized = {a.name: to_eur(native[a.name], a.currency, fx) for a in config.assets}
-    for asset in config.assets:
-        if asset.usable_start is not None:
-            normalized[asset.name] = normalized[asset.name].loc[asset.usable_start:]
     common = prepare_common_prices(pd.DataFrame(normalized).sort_index())
     rows = []
     for asset in config.assets:
@@ -149,8 +146,6 @@ def load_market_data(config: Config, provider: Provider | None = None) -> Market
                      "Raw start date": raw.first_valid_index(), "Raw end date": raw.last_valid_index(),
                      "Raw observations": raw.count(), "Raw missing observations": int(raw.isna().sum()),
                      "FX missing on observed sessions": int((raw.notna() & to_eur(raw, asset.currency, fx).isna()).sum()),
-                     "Configured usable start": asset.usable_start,
-                     "Pre-usable source observations excluded": int(raw.loc[raw.index < pd.Timestamp(asset.usable_start)].count()) if asset.usable_start else 0,
                      "EUR observations": eur.count(), "Final common start": common.index[0],
                      "Final common end": common.index[-1], "Final common observations": len(common),
                      "Distributions": asset.distributions, "Limitation": asset.limitation,
@@ -165,3 +160,31 @@ def load_market_data(config: Config, provider: Provider | None = None) -> Market
         np.testing.assert_allclose(sample["Computed EUR value"], sample["USD value"] / sample["EURUSD"],
                                    rtol=1e-12, atol=1e-12)
     return MarketData(native, normalized, fx, common, pd.DataFrame(rows).set_index("Asset"), sample)
+
+
+def study_coverage(data: MarketData, config: Config) -> dict:
+    """Separate raw-asset limits, FX limits and the first jointly observed date."""
+    raw_starts = {name: series.first_valid_index() for name, series in data.native.items()}
+    raw_ends = {name: series.last_valid_index() for name, series in data.native.items()}
+    eur_starts = {name: series.first_valid_index() for name, series in data.normalized.items()}
+    raw_limit = max(raw_starts.values())
+    eligible_start = max(eur_starts.values())
+    limiting_assets = [name for name, start in eur_starts.items() if start == eligible_start]
+    fx_start = data.fx.first_valid_index() if data.fx is not None else None
+    fx_limits = fx_start == eligible_start and any(
+        asset.currency == "USD" and raw_starts[asset.name] < fx_start for asset in config.assets
+    )
+    return {
+        "common_start": str(data.common.index[0].date()),
+        "common_end": str(data.common.index[-1].date()),
+        "common_observations": len(data.common),
+        "latest_raw_asset_start": str(raw_limit.date()),
+        "raw_start_limiting_assets": [name for name, start in raw_starts.items() if start == raw_limit],
+        "earliest_raw_asset_end": str(min(raw_ends.values()).date()),
+        "raw_end_limiting_assets": [name for name, end in raw_ends.items() if end == min(raw_ends.values())],
+        "latest_eur_asset_start": str(eligible_start.date()),
+        "eur_start_limiting_assets": limiting_assets,
+        "start_limiting_series": [config.fx_symbol] if fx_limits else limiting_assets,
+        "fx_start": str(fx_start.date()) if fx_start is not None else None,
+        "first_common_date_delayed_by_calendar": bool(data.common.index[0] > eligible_start),
+    }

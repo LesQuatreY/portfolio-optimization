@@ -1,0 +1,110 @@
+{
+  "assets": [
+    {
+      "name": "Apple",
+      "symbol": "AAPL",
+      "instrument": "Primary US equity",
+      "currency": "USD",
+      "return_type": "Adjusted price",
+      "distributions": "Yahoo split/dividend adjustment; reinvestment proxy before investor tax",
+      "limitation": "Adjusted prices are a vendor proxy, not an independently audited TR index.",
+      "reference": ""
+    },
+    {
+      "name": "Nasdaq 100",
+      "symbol": "QQQ",
+      "instrument": "Invesco QQQ ETF; Nasdaq-100 exposure proxy",
+      "currency": "USD",
+      "return_type": "Adjusted price",
+      "distributions": "Yahoo dividend/split adjustments; distributions assumed reinvested",
+      "limitation": "Exact Nasdaq-100 TR unavailable from tested Yahoo ^XNDX. QQQ is an ETF proxy with fund fees/tracking differences, not the gross TR benchmark.",
+      "reference": "https://www.invesco.com/qqq-etf/en/home.html"
+    },
+    {
+      "name": "S&P 500",
+      "symbol": "^SP500TR",
+      "instrument": "S&P 500 Total Return index",
+      "currency": "USD",
+      "return_type": "Gross Return",
+      "distributions": "Gross dividends reinvested by index methodology",
+      "limitation": "",
+      "reference": "https://www.spglobal.com/spdji/en/indices/equity/sp-500/"
+    },
+    {
+      "name": "Dow Jones",
+      "symbol": "DIA",
+      "instrument": "State Street SPDR Dow Jones Industrial Average ETF proxy",
+      "currency": "USD",
+      "return_type": "Adjusted price",
+      "distributions": "Yahoo dividend/split adjustments; distributions assumed reinvested",
+      "limitation": "Exact Dow Jones TR unavailable from tested Yahoo ^DJITR. DIA is an ETF proxy with fund fees/tracking differences, not the gross TR benchmark.",
+      "reference": "https://www.ssga.com/us/en/individual/etfs/state-street-spdr-dow-jones-industrial-average-etf-trust-dia"
+    },
+    {
+      "name": "CAC 40",
+      "symbol": "PX1GR.PA",
+      "instrument": "CAC 40 Gross Return Index",
+      "currency": "EUR",
+      "return_type": "Gross Return",
+      "distributions": "Gross dividends reinvested in index levels; no additional dividend adjustment",
+      "limitation": "Yahoo daily history has missing observations; inspect raw valid end and missing counts before interpreting coverage.",
+      "reference": "https://live.euronext.com/en/product/indices/QS0011131834-XPAR"
+    },
+    {
+      "name": "Gold",
+      "symbol": "GC=F",
+      "instrument": "Yahoo continuous COMEX gold futures quotation",
+      "currency": "USD",
+      "return_type": "Price Return",
+      "distributions": "No dividends; quoted futures price changes only",
+      "limitation": "Not spot gold or an investable futures total-return index: roll, collateral yield and contract stitching are unmodeled.",
+      "reference": ""
+    }
+  ],
+  "leverage": [
+    [
+      "Apple",
+      1.5
+    ],
+    [
+      "Nasdaq 100",
+      2.0
+    ]
+  ],
+  "targets": [
+    [
+      "Prudent",
+      0.15
+    ],
+    [
+      "Modéré",
+      0.2
+    ],
+    [
+      "Dynamique",
+      0.3
+    ],
+    [
+      "Agressif",
+      0.4
+    ],
+    [
+      "Très agressif",
+      0.5
+    ]
+  ],
+  "include_leveraged_in_frontier": true,
+  "trading_days": 252,
+  "calendar_days_per_year": 365.25,
+  "risk_free_rate": 0.0,
+  "initial_nav": 100.0,
+  "frontier_points": 50,
+  "tolerance": 1e-07,
+  "allocation_display_threshold": 0.01,
+  "base_currency": "EUR",
+  "provider": "yahoo",
+  "fx_symbol": "EURUSD=X",
+  "end": "2026-10-05",
+  "cache_dir": "C:\\Users\\tangu\\Documents\\Projet perso\\Trading\\portfolio-optimization\\.cache\\market",
+  "output_dir": "C:\\Users\\tangu\\Documents\\Projet perso\\Trading\\portfolio-optimization\\outputs"
+}

@@ -1,0 +1,26 @@
+{
+  "common_start": "2003-12-01",
+  "common_end": "2015-12-18",
+  "common_observations": 2970,
+  "latest_raw_asset_start": "2000-08-30",
+  "raw_start_limiting_assets": [
+    "Gold"
+  ],
+  "earliest_raw_asset_end": "2015-12-18",
+  "raw_end_limiting_assets": [
+    "CAC 40"
+  ],
+  "latest_eur_asset_start": "2003-12-01",
+  "eur_start_limiting_assets": [
+    "Apple",
+    "Nasdaq 100",
+    "S&P 500",
+    "Dow Jones",
+    "Gold"
+  ],
+  "start_limiting_series": [
+    "EURUSD=X"
+  ],
+  "fx_start": "2003-12-01",
+  "first_common_date_delayed_by_calendar": false
+}
