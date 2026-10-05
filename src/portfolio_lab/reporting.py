@@ -8,6 +8,16 @@ from .returns import simple_returns
 from .plotting import allocation_summary
 
 
+def format_weights(weights: pd.DataFrame) -> pd.DataFrame:
+    """Return display strings without changing numerical weights or their sums."""
+    def percentage(weight):
+        if pd.isna(weight):
+            return "—"
+        return f"{0.0 if abs(weight) < 1e-10 else weight:.2%}"
+
+    return weights.apply(lambda column: column.map(percentage))
+
+
 def validate_study(prices, optimization, config) -> dict:
     returns = simple_returns(prices)
     finite_count = int((~np.isfinite(returns.to_numpy())).sum())
@@ -97,7 +107,14 @@ def write_review_outputs(data, prices, stats, diagnostics, optimization, config,
     (directory / "study-coverage.json").write_text(json.dumps(coverage, indent=2, ensure_ascii=False), encoding="utf-8")
     sections = ["# Executed study review", "All economic series are normalized to EUR before returns and covariance. Synthetic raw observations describe the constructed native NAV over the study interval; their symbols identify the underlying source."]
     for name, table in tables.items():
-        rendered = "\n".join(line.rstrip() for line in table.to_string().splitlines())
+        display_table = table
+        if name == "portfolio-weights":
+            display_table = format_weights(table)
+        elif name == "frontier":
+            display_table = table.copy()
+            columns = [column for column in table if column.startswith("Weight: ")]
+            display_table[columns] = format_weights(table[columns])
+        rendered = "\n".join(line.rstrip() for line in display_table.to_string().splitlines())
         sections.extend([f"## {name}", "```text\n" + rendered + "\n```"])
     sections.extend(["## Numerical sanity checks", "```json\n" + json.dumps(sanity, indent=2) + "\n```"])
     sections.extend(["## Historical coverage", "```json\n" + json.dumps(coverage, indent=2) + "\n```"])
