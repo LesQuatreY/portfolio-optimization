@@ -22,29 +22,70 @@ ASSET_CATALOGUE: Mapping[str, Asset] = MappingProxyType({
         Asset("Apple", "AAPL", "Primary US equity", "USD", "Adjusted price",
               "Yahoo split/dividend adjustment; reinvestment proxy before investor tax",
               "Adjusted prices are a vendor proxy, not an independently audited TR index."),
+
         Asset("Nasdaq 100", "QQQ", "Invesco QQQ ETF; Nasdaq-100 exposure proxy", "USD", "Adjusted price",
               "Yahoo dividend/split adjustments; distributions assumed reinvested",
               "Exact Nasdaq-100 TR unavailable from tested Yahoo ^XNDX. QQQ is an ETF proxy with fund fees/tracking differences, not the gross TR benchmark.",
               "https://www.invesco.com/qqq-etf/en/home.html"),
+
         Asset("S&P 500", "^SP500TR", "S&P 500 Total Return index", "USD", "Gross Return",
               "Gross dividends reinvested by index methodology", reference="https://www.spglobal.com/spdji/en/indices/equity/sp-500/"),
+
         Asset("Dow Jones", "DIA", "State Street SPDR Dow Jones Industrial Average ETF proxy", "USD", "Adjusted price",
               "Yahoo dividend/split adjustments; distributions assumed reinvested",
               "Exact Dow Jones TR unavailable from tested Yahoo ^DJITR. DIA is an ETF proxy with fund fees/tracking differences, not the gross TR benchmark.",
               "https://www.ssga.com/us/en/individual/etfs/state-street-spdr-dow-jones-industrial-average-etf-trust-dia"),
+
         Asset("CAC 40", "PX1GR.PA", "CAC 40 Gross Return Index", "EUR", "Gross Return",
               "Gross dividends reinvested in index levels; no additional dividend adjustment",
               "Yahoo daily history has missing observations; inspect raw valid end and missing counts before interpreting coverage.",
               reference="https://live.euronext.com/en/product/indices/QS0011131834-XPAR"),
+
         Asset("Gold", "GC=F", "Yahoo continuous COMEX gold futures quotation", "USD", "Price Return",
               "No dividends; quoted futures price changes only",
               "Not spot gold or an investable futures total-return index: roll, collateral yield and contract stitching are unmodeled."),
+
         Asset("MSCI World", "IWDA.AS",
               "iShares Core MSCI World UCITS ETF USD (Acc); Euronext Amsterdam listing",
               "EUR", "Adjusted price",
               "Accumulating ETF; income reinvested within the fund; Yahoo adjusted close",
               "ETF fees and tracking differences apply; EUR listing currency does not imply currency hedging.",
               "https://www.ishares.com/uk/individual/en/products/251882/ishares-core-msci-world-ucits-etf-usd-acc"),
+
+      Asset("Euro Govt Bond 1-3y", "IBGS.AS", 
+              "iShares € Govt Bond 1-3yr UCITS ETF; Euronext Amsterdam listing", 
+              "EUR", "Adjusted price",
+              "Yahoo dividend/split adjustments; distributions assumed reinvested",
+              "ETF fees and tracking differences apply.",
+              reference="https://finance.yahoo.com/quote/IBGS.AS/"),
+
+      Asset("Coca-Cola", "KO", 
+              "The Coca-Cola Company; US large-cap consumer equity", 
+              "USD", "Adjusted price",
+              "Yahoo split/dividend adjustment; reinvestment proxy before investor tax",
+              "Adjusted prices are a vendor proxy, not an independently audited TR index.",
+              reference="https://finance.yahoo.com/quote/KO/"),
+
+      Asset("Euro Govt Bond 7-10y", "IBGM.AS", 
+            "iShares € Govt Bond 7-10yr UCITS ETF; Euronext Amsterdam listing", 
+            "EUR", "Adjusted price",
+            "Yahoo dividend/split adjustments; distributions assumed reinvested",
+            "ETF fees and tracking differences apply. Note: Higher duration makes it more volatile than the 1-3yr equivalent (IBGS.AS).",
+            reference="https://finance.yahoo.com/quote/IBGM.AS/"),
+
+      Asset("Global Real Estate", "IWDP.AS", 
+              "iShares Developed Markets Property Yield UCITS ETF; Euronext Amsterdam listing (Global REITs / Real Estate)", 
+              "EUR", "Adjusted price",
+              "Yahoo dividend/split adjustments; distributions assumed reinvested",
+              "ETF fees and tracking differences apply.",
+              reference="https://finance.yahoo.com/quote/IWDP.AS/"),
+
+      Asset("Broad Commodities", "DBC", 
+              "Invesco DB Commodity Index Tracking Fund; US listing (Diversified Commodities futures)", 
+              "USD", "Adjusted price",
+              "Yahoo dividend/split adjustments; distributions assumed reinvested",
+              "Tracks a diversified basket of commodity futures. ETF fees apply. Note: Structured as a commodity pool (generates a Schedule K-1 for US tax purposes).",
+              reference="https://finance.yahoo.com/quote/DBC/"),
     )
 })
 
