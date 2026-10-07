@@ -115,6 +115,12 @@ Genuine TR benchmark sources are preferred when their histories are accessible a
 
 Benchmark references: [Nasdaq XNDX](https://indexes.nasdaqomx.com/Index/Overview/xndx), [S&P 500](https://www.spglobal.com/spdji/en/indices/equity/sp-500/), [Dow Jones Industrial Average](https://www.spglobal.com/spdji/en/indices/equity/dow-jones-industrial-average/) and [CAC 40 GR](https://live.euronext.com/en/product/indices/QS0011131834-XPAR). See the executed provenance table for the configured Yahoo symbols and actual available dates.
 
+## Optional investor constraints
+
+The statistical optimizer and investor preferences are kept apart. By default (`Config.max_weights = ()`) the optimizer is unconstrained apart from long-only, fully invested weights, and its results are the reference. `with_max_weights(config, {"Gold": 0.10})` adds per-asset upper bounds for any optimizer asset (names must be configured assets or leveraged labels; `0 < limit <= 1`; limits that cannot sum to 100% fail before optimizing). They become SLSQP bounds for every portfolio, frontier point and target; capped assets leave the single-asset dominance check, since a 100% position is outside the policy.
+
+`compare_investor_constraints(prices, config, {"Gold": 0.10})` always runs the unconstrained reference next to the constrained optimizer on the same data and reports, for Maximum Sharpe, Minimum Volatility and Maximum CAGR, the realized CAGR, volatility, Sharpe and maximum drawdown (difference = constrained − unconstrained) plus weights and the investor limit per asset. This is the in-sample historical cost of a personal policy, not evidence that either portfolio is statistically superior. `portfolio_analysis.ipynb` shows it in its own section (`investor_max_weights`); `portfolio_robustness.ipynb` uses no limits unless `config.max_weights` is set explicitly (walk-forward then applies them in every fold; the Equal Weight benchmark stays 1/n).
+
 ## Robustness and out-of-sample validation
 
 `notebooks/portfolio_robustness.ipynb` asks a different question than the main notebook: how stable is the optimized portfolio through time, and how does it perform out of sample? It starts from the same `load_config()` defaults (universe, providers, EUR conversion, leverage, engine settings); all logic is in `portfolio_lab.robustness`, which calls the engine's `PortfolioOptimizer.core_portfolios()` (Minimum Volatility, Maximum CAGR, multi-start Maximum Sharpe) rather than re-implementing it.

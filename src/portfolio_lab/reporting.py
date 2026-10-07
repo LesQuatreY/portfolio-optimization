@@ -34,8 +34,9 @@ def validate_study(prices, optimization, config) -> dict:
             raise RuntimeError(f"{name}: optimized portfolio reports failure.")
         weight_sums[name] = float(w.sum())
         minimum_weight = min(minimum_weight, float(w.min()))
-        if abs(w.sum() - 1) > 1e-8 or w.min() < -1e-8 or w.max() > 1 + 1e-8:
-            raise RuntimeError(f"{name}: invalid optimized weights.")
+        caps = pd.Series(dict(config.max_weights), dtype=float).reindex(w.index).fillna(1.)
+        if abs(w.sum() - 1) > 1e-8 or w.min() < -1e-8 or (w > caps + 1e-8).any():
+            raise RuntimeError(f"{name}: invalid optimized weights or investor max weight exceeded.")
         daily = returns[w.index] @ w
         nav = np.r_[1., np.cumprod(1 + daily.to_numpy())]
         years = (prices.index[-1] - prices.index[0]).days / config.calendar_days_per_year
@@ -56,6 +57,7 @@ def validate_study(prices, optimization, config) -> dict:
             "covariance_shrinkage": optimization.covariance_shrinkage,
             "expected_return_estimator": optimization.expected_return_estimator,
             "expected_return_shrinkage": optimization.expected_return_shrinkage,
+            "investor_max_weights": dict(config.max_weights),
             "portfolio_weight_sums": weight_sums, "minimum_portfolio_weight": minimum_weight,
             "maximum_weight_sum_error": max(abs(value - 1) for value in weight_sums.values()),
             "largest_volatility_ceiling_violation": largest_violation,

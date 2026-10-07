@@ -1,9 +1,9 @@
 """Long-only constant-weight historical growth optimization with risk ceilings."""
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
-from .config import Config
+from .config import Config, with_max_weights
 from .metrics import compute_asset_metrics
 from .leverage import leveraged_name
 from .returns import simple_returns
@@ -24,6 +24,10 @@ class OptimizationResults:
     covariance_shrinkage: float | None = None
     expected_return_estimator: str = "Sample mean"
     expected_return_shrinkage: float | None = None
+
+
+DOMINANCE_COLUMNS = ["Asset", "100% CAGR", "100% volatility", "Frontier CAGR", "Frontier volatility",
+                     "100% estimated volatility", "Frontier estimated volatility"]
 
 
 def select_frontier_assets(config: Config) -> list[str]:
@@ -57,6 +61,16 @@ class PortfolioOptimizer:
         self.expected = estimate_expected_returns(self.returns, config.expected_return_method, config.trading_days)
         self.mu = self.expected.values.to_numpy()
         self.n = prices.shape[1]
+        # Optional investor upper bounds (policy, not model); 1 = only the long-only bound.
+        limits = dict(config.max_weights)
+        outside = [name for name in limits if name not in prices.columns]
+        if outside:
+            raise ValueError(f"Investor max weights {outside} do not match optimizer assets {list(prices.columns)}.")
+        self.upper = np.array([float(limits.get(name, 1.)) for name in prices.columns])
+        self.constrained = bool((self.upper < 1).any())
+        if self.upper.sum() < 1 - 1e-12:
+            raise ValueError(f"Investor max weights are infeasible: the {self.n} asset limits sum to "
+                             f"{self.upper.sum():.2%} < 100%.")
         self.years = (prices.index[-1] - prices.index[0]).days / config.calendar_days_per_year
         self.log = []
         self.equal = np.full(self.n, 1 / self.n)
@@ -92,6 +106,17 @@ class PortfolioOptimizer:
         excess = self.mu @ w - self.config.risk_free_rate
         return -self.mu / vol + excess * (self.sigma @ w) / vol**3
 
+    def cap_and_normalize(self, x):
+        """Clip to [0, cap] and restore sum 1 without pushing any weight above its cap."""
+        w = np.clip(x, 0, self.upper)
+        residual = 1 - w.sum()
+        if residual > 0:
+            room = self.upper - w
+            w = w + residual * room / room.sum()
+        elif residual < 0:
+            w = w + residual * w / w.sum()
+        return np.minimum(w, self.upper)
+
     def solve(self, objective, gradient, start, label: str, target: float | None = None):
         constraints = [{"type": "eq", "fun": lambda w: w.sum() - 1,
                         "jac": lambda w: np.ones(self.n)}]
@@ -100,9 +125,10 @@ class PortfolioOptimizer:
             constraints.append({"type": "ineq", "fun": lambda w: (target**2 - self.variance(w)) / scale,
                                 "jac": lambda w: -2 * self.sigma @ w / scale})
         attempts = []
+        bounds = [(0., float(cap)) for cap in self.upper] if self.constrained else [(0., 1.)] * self.n
         for ftol in (1e-10, 1e-7):
             result = minimize(objective, start, jac=gradient, method="SLSQP",
-                              bounds=[(0., 1.)] * self.n, constraints=constraints,
+                              bounds=bounds, constraints=constraints,
                               options={"ftol": ftol, "maxiter": 1000})
             attempts.append({"Portfolio": label, "Success": bool(result.success),
                              "Status": int(result.status), "Message": str(result.message),
@@ -115,10 +141,13 @@ class PortfolioOptimizer:
         if not result.success:
             raise RuntimeError(f"{label}: portfolio optimization failed: {result.message}")
         if (not np.isfinite(result.x).all() or result.x.min() < -1e-8
-                or result.x.max() > 1 + 1e-8 or abs(result.x.sum() - 1) > 1e-8):
+                or (result.x > self.upper + 1e-8).any() or abs(result.x.sum() - 1) > 1e-8):
             raise RuntimeError(f"{label}: optimizer returned infeasible weights.")
-        w = np.clip(result.x, 0, 1)
-        w /= w.sum()
+        if self.constrained:
+            w = self.cap_and_normalize(result.x)
+        else:
+            w = np.clip(result.x, 0, 1)
+            w /= w.sum()
         if target is not None and np.sqrt(max(self.variance(w), 0)) > target + self.config.tolerance:
             raise RuntimeError(f"{label}: volatility ceiling violated after numerical cleanup.")
         return self.metrics(w, str(result.message), int(result.status))
@@ -185,6 +214,9 @@ class PortfolioOptimizer:
                                             self.config.risk_free_rate, self.config.calendar_days_per_year)
         dominance = []
         for i, asset in enumerate(self.prices.columns):
+            if self.upper[i] < 1:
+                # A 100% position is outside the investor's limits, so it is not a frontier competitor.
+                continue
             single = self.metrics(np.eye(self.n)[i])
             np.testing.assert_allclose([single["CAGR"], single["Volatility"]],
                 [standalone.loc[asset, "CAGR"], standalone.loc[asset, "Volatility annualized"]], atol=1e-10)
@@ -212,10 +244,70 @@ class PortfolioOptimizer:
                                 else pd.Series(np.nan, index=self.prices.columns)
                                 for name, p in portfolios.items()}).T.rename_axis("Portfolio")
         return OptimizationResults(portfolios, frontier, summary, weights, self.covariance,
-                                   pd.DataFrame(dominance).set_index("Asset"), pd.DataFrame(self.log),
+                                   pd.DataFrame(dominance, columns=DOMINANCE_COLUMNS).set_index("Asset"),
+                                   pd.DataFrame(self.log),
                                    self.estimate.label, self.estimate.shrinkage,
                                    self.expected.label, self.expected.shrinkage)
 
 
 def optimize_frontier(prices: pd.DataFrame, config: Config) -> OptimizationResults:
     return PortfolioOptimizer(prices[select_frontier_assets(config)], config).run()
+
+
+COMPARED_PORTFOLIOS = ("Maximum Sharpe", "Minimum Volatility", "Maximum CAGR")
+COST_METRICS = ("CAGR", "Volatility", "Sharpe", "Max Drawdown")
+
+
+@dataclass
+class InvestorConstraintComparison:
+    """Unconstrained statistical optimum next to the best portfolio within investor limits.
+
+    Difference = constrained - unconstrained (realized historical metrics on the same data).
+    """
+    limits: pd.Series
+    unconstrained: OptimizationResults
+    constrained: OptimizationResults
+    cost: pd.DataFrame
+    weights: pd.DataFrame
+
+    def formatted(self) -> tuple[pd.DataFrame, pd.DataFrame]:
+        def fmt(metric, value, signed=False):
+            if pd.isna(value):
+                return "—"
+            sign = "+" if signed else ""
+            return f"{value:{sign}.3f}" if metric == "Sharpe" else f"{value:{sign}.2%}"
+        cost = self.cost.copy().astype(object)
+        for (portfolio, metric), row in self.cost.iterrows():
+            cost.loc[(portfolio, metric)] = [fmt(metric, row["Unconstrained"]), fmt(metric, row["Constrained"]),
+                                             fmt(metric, row["Difference"], signed=True)]
+        weights = self.weights.copy().astype(object)
+        for column in weights:
+            weights[column] = self.weights[column].map(lambda v: fmt("w", v, column == "Difference"))
+        return cost, weights
+
+
+def compare_investor_constraints(prices: pd.DataFrame, config: Config,
+                                 max_weights: dict[str, float] | None = None,
+                                 portfolios=COMPARED_PORTFOLIOS) -> InvestorConstraintComparison:
+    """Run the unconstrained reference and the investor-constrained optimizer on the same prices.
+
+    `max_weights` (e.g. {"Gold": 0.10}) overrides config.max_weights; the reference always
+    drops every investor limit, so the statistical optimum stays visible.
+    """
+    constrained_config = config if max_weights is None else with_max_weights(config, max_weights)
+    if not constrained_config.max_weights:
+        raise ValueError("No investor max weights configured; the unconstrained optimizer is the reference.")
+    reference = optimize_frontier(prices, replace(constrained_config, max_weights=()))
+    constrained = optimize_frontier(prices, constrained_config)
+    limits = pd.Series(dict(constrained_config.max_weights), name="Investor limit", dtype=float)
+    cost = pd.DataFrame([{"Portfolio": name, "Metric": metric,
+                          "Unconstrained": float(reference.summary.loc[name, metric]),
+                          "Constrained": float(constrained.summary.loc[name, metric])} for name in portfolios
+                         for metric in COST_METRICS]).set_index(["Portfolio", "Metric"])
+    cost["Difference"] = cost["Constrained"] - cost["Unconstrained"]
+    weights = pd.concat({name: pd.DataFrame({"Unconstrained": reference.weights.loc[name],
+                                             "Constrained": constrained.weights.loc[name]})
+                         for name in portfolios}, names=["Portfolio", "Asset"])
+    weights["Difference"] = weights["Constrained"] - weights["Unconstrained"]
+    weights["Investor limit"] = weights.index.get_level_values("Asset").map(limits)
+    return InvestorConstraintComparison(limits, reference, constrained, cost, weights)

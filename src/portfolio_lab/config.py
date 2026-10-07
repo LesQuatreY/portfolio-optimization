@@ -15,6 +15,9 @@ class Config:
     assets: tuple[Asset, ...]
     # Safe default: no synthetic leverage unless explicitly requested.
     leverage: tuple[tuple[str, float], ...] = ()
+    # Optional investor policy limits (asset -> maximum weight), not statistical estimates.
+    # Empty = unconstrained reference optimizer (long-only, fully invested only).
+    max_weights: tuple[tuple[str, float], ...] = ()
     targets: tuple[tuple[str, float], ...] = (
         ("Prudent", .15), ("Modéré", .20), ("Dynamique", .30),
         ("Agressif", .40), ("Très agressif", .50),
@@ -87,6 +90,15 @@ class Config:
         labels = [f"{name} x{factor:g}" for name, factor in self.leverage]
         if len(set(names + labels)) != len(names + labels):
             raise ValueError("Synthetic labels collide with asset names.")
+        if len(dict(self.max_weights)) != len(self.max_weights):
+            raise ValueError("Duplicate asset in investor max weights.")
+        for name, cap in self.max_weights:
+            if name not in names + labels:
+                raise ValueError(f"Investor max weight for '{name}': not a configured asset "
+                                 f"(choose from {names + labels}).")
+            if isinstance(cap, bool) or not isinstance(cap, (int, float)) or not math.isfinite(cap) \
+                    or not 0 < cap <= 1:
+                raise ValueError(f"Investor max weight for '{name}' must satisfy 0 < weight <= 1; got {cap!r}.")
         if len(dict(self.targets)) != len(self.targets) or any(
             not isinstance(name, str) or not name.strip() or not math.isfinite(risk) or risk < 0
             or name in {"Minimum Volatility", "Maximum CAGR", "Maximum Sharpe"} for name, risk in self.targets
@@ -119,3 +131,10 @@ def configure_universe(config: Config, assets: Mapping[str, str],
         raise ValueError("Leveraged assets must be a mapping of asset name to factor, {} or None.")
     selected = tuple((name, factor) for name, factor in (leverage or {}).items() if factor != 1)
     return replace(config, assets=resolve_assets(assets, catalogue=catalogue), leverage=selected)
+
+
+def with_max_weights(config: Config, max_weights: Mapping[str, float] | None) -> Config:
+    """Investor policy limits, e.g. {"Gold": 0.10}; None or {} removes all limits."""
+    if max_weights is not None and not isinstance(max_weights, Mapping):
+        raise ValueError("Investor max weights must be a mapping of asset name to maximum weight, {} or None.")
+    return replace(config, max_weights=tuple((max_weights or {}).items()))
