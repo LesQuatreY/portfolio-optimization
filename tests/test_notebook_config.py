@@ -152,7 +152,7 @@ def test_universe_propagates_to_data_fx_leverage_optimization_and_report(config,
         def history(self, asset, end):
             calls.append(asset.symbol)
             paths = {"REPLACED": portfolio_prices["A"] * 100, "NEW": portfolio_prices["B"] * 50,
-                     "EURUSD=X": pd.Series(2., index=dates)}
+                     "DEXUSEU": pd.Series(2., index=dates)}
             return paths[asset.symbol].rename(asset.name)
 
     catalogue = {
@@ -162,7 +162,7 @@ def test_universe_propagates_to_data_fx_leverage_optimization_and_report(config,
     cfg = configure_universe(replace(config, output_dir=tmp_path),
                              {"A": "REPLACED", "New": "NEW"}, {"A": 1.5}, catalogue=catalogue)
     data = load_market_data(cfg, Provider())
-    assert calls == ["REPLACED", "NEW", "EURUSD=X"]
+    assert calls == ["REPLACED", "NEW", "DEXUSEU"]
     assert list(data.common) == ["A", "New"]
     np.testing.assert_allclose(data.common["A"], portfolio_prices["A"] * 50)
     assert data.provenance.loc["A", "Symbol"] == "REPLACED"
@@ -224,7 +224,7 @@ def test_coverage_identifies_fx_as_start_limit(config):
 
     coverage = study_coverage(load_market_data(config, Provider()), config)
     assert coverage["common_start"] == "2020-01-03"
-    assert coverage["start_limiting_series"] == ["EURUSD=X"]
+    assert coverage["start_limiting_series"] == ["DEXUSEU"]
     assert coverage["eur_start_limiting_assets"] == ["A"]
 
 

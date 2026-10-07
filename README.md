@@ -121,7 +121,9 @@ Yahoo downloads use explicit daily frequency, exclusive end, adjustment based on
 
 ## EUR normalization and dates
 
-Yahoo `EURUSD=X` is **USD per EUR**. If one EUR buys two USD, USD 100 is EUR 50:
+EUR/USD comes from FRED series **`DEXUSEU`** ("U.S. Dollars to One Euro", Federal Reserve noon buying rates, from 1999-01-04), fetched by `FREDProvider` from the public `fredgraph.csv` endpoint (no API key) and snapshotted in `<cache_dir>/fred` like other sources. It replaced Yahoo `EURUSD=X`, whose history only starts on 2003-12-01 and used to truncate the common window. `Config.fx_provider`/`fx_symbol` record the choice; the notebook needs no FX code. FRED leaves US holidays blank; those dates are dropped (never filled), so USD assets lose those sessions, as reported in `FX missing on observed sessions`. Provenance shows `FX provider`, `FX series used`, `FX convention` and `FX start date`.
+
+The quote is **USD per EUR** and is used as published, never inverted. If one EUR buys two USD, USD 100 is EUR 50:
 
 ```text
 Value_EUR(t) = Value_USD(t) / EURUSD(t)

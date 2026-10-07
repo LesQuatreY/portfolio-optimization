@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 from portfolio_lab.assets import ASSET_CATALOGUE
 from portfolio_lab.config import configure_universe, load_config
-from portfolio_lab.data import MSCIProvider, load_market_data, normalize_msci_levels
+from portfolio_lab.data import FREDProvider, MSCIProvider, load_market_data, normalize_msci_levels
 
 MSCI_WORLD = ASSET_CATALOGUE["MSCI:990100:NETR"]
 
@@ -95,7 +95,7 @@ def test_mixed_providers_route_per_asset_and_msci_enters_fx_path(config, tmp_pat
 
     class Yahoo:
         name = "Yahoo Finance"
-        values = {"AAPL": [10., 11., 12., 13.], "EURUSD=X": [2., 2., 1., 1.]}
+        values = {"AAPL": [10., 11., 12., 13.]}
 
         def history(self, asset, end):
             calls.append((self.name, asset.symbol))
@@ -105,16 +105,23 @@ def test_mixed_providers_route_per_asset_and_msci_enters_fx_path(config, tmp_pat
         calls.append(("MSCI", code, variant))
         return msci_frame(dates.strftime("%Y-%m-%d"), [100., 110., 120., 130.])
 
-    msci = MSCIProvider(tmp_path, get_levels=get_levels)
+    def fetch_csv(series_id, last):
+        calls.append(("FRED", series_id))
+        return "observation_date,DEXUSEU\n" + "".join(
+            f"{d:%Y-%m-%d},{v}\n" for d, v in zip(dates, [2., 2., 1., 1.]))
+
+    msci = MSCIProvider(tmp_path / "msci", get_levels=get_levels)
+    fred = FREDProvider(tmp_path / "fred", fetch_csv=fetch_csv)
     cfg = configure_universe(config, {"Apple": "AAPL", "MSCI World": "MSCI:990100:NETR"}, {})
-    data = load_market_data(cfg, {"yahoo": Yahoo(), "msci": msci})
-    assert calls == [("Yahoo Finance", "AAPL"), ("MSCI", "990100", "NETR"), ("Yahoo Finance", "EURUSD=X")]
+    data = load_market_data(cfg, {"yahoo": Yahoo(), "msci": msci, "fred": fred})
+    assert calls == [("Yahoo Finance", "AAPL"), ("MSCI", "990100", "NETR"), ("FRED", "DEXUSEU")]
     # Native USD levels are kept; EUR = USD / EURUSD through the shared FX path.
     np.testing.assert_array_equal(data.native["MSCI World"], [100., 110., 120., 130.])
     np.testing.assert_allclose(data.common["MSCI World"], [50., 55., 120., 130.])
     row = data.provenance.loc["MSCI World"]
     assert row["Provider"] == "MSCI" and row["Symbol"] == "MSCI:990100:NETR"
-    assert row["Native currency"] == "USD" and row["FX series used"] == "EURUSD=X"
+    assert row["Native currency"] == "USD" and row["FX series used"] == "DEXUSEU"
+    assert row["FX provider"] == "FRED" and row["FX convention"] == "USD per EUR"
     assert row["Return type"] == "Net Total Return"
     assert "990100" in row["Source detail"] and "NETR" in row["Source detail"]
     assert data.provenance.loc["Apple", "Provider"] == "Yahoo Finance"
@@ -140,11 +147,12 @@ def test_default_loading_routes_by_catalogue_without_notebook_provider_choice(co
 
     monkeypatch.setattr(data_module, "YahooProvider", fake("yahoo"))
     monkeypatch.setattr(data_module, "MSCIProvider", fake("msci"))
+    monkeypatch.setattr(data_module, "FREDProvider", fake("fred"))
     cfg = configure_universe(replace(config, cache_dir=tmp_path),
                              {"Apple": "AAPL", "MSCI World": "MSCI:990100:NETR", "Gold": "GC=F"}, {})
     load_market_data(cfg)
-    assert built == [("yahoo", tmp_path), ("msci", tmp_path / "msci")]
-    assert calls == [("yahoo", "AAPL"), ("msci", "MSCI:990100:NETR"), ("yahoo", "GC=F"), ("yahoo", "EURUSD=X")]
+    assert built == [("yahoo", tmp_path), ("msci", tmp_path / "msci"), ("fred", tmp_path / "fred")]
+    assert calls == [("yahoo", "AAPL"), ("msci", "MSCI:990100:NETR"), ("yahoo", "GC=F"), ("fred", "DEXUSEU")]
 
 
 def test_missing_provider_for_asset_is_explicit(config):

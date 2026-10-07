@@ -28,7 +28,10 @@ class Config:
     base_currency: str = "EUR"
     # "yahoo": route each asset to its catalogued Asset.provider; "csv": offline files for every series.
     provider: str = "yahoo"
-    fx_symbol: str = "EURUSD=X"
+    # EUR/USD for USD -> EUR conversion, quoted USD per EUR. FRED DEXUSEU starts 1999-01-04
+    # (Yahoo EURUSD=X only from 2003-12-01, which used to truncate the common window).
+    fx_provider: str = "fred"
+    fx_symbol: str = "DEXUSEU"
     # Exclusive end: excludes the current, potentially incomplete session.
     end: str = "2026-10-05"
     cache_dir: Path = Path(".cache/market")
@@ -49,6 +52,8 @@ class Config:
                or a.provider not in {"yahoo", "msci"}
                for a in self.assets):
             raise ValueError("Invalid asset metadata or unsupported currency/return type/provider.")
+        if self.fx_provider not in {"fred", "yahoo"} or not self.fx_symbol.strip():
+            raise ValueError("FX must come from a supported provider ('fred' or 'yahoo') with a series id.")
         if self.base_currency != "EUR":
             raise ValueError("This study supports EUR as base currency.")
         if not isinstance(self.include_leveraged_in_frontier, bool):

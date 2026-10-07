@@ -204,6 +204,82 @@ class CSVProvider:
         return series
 
 
+FRED_SERIES = re.compile(r"[A-Z0-9]+")
+FRED_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+
+
+def normalize_fred_series(frame: pd.DataFrame | None, asset: Asset, end: str) -> pd.Series:
+    """fredgraph observation_date/<series id> rows -> observed values before the exclusive end.
+
+    Values are kept exactly as published (DEXUSEU stays USD per EUR; never inverted).
+    Blank cells are FRED's non-publication days (holidays) and are dropped, like any
+    unobserved session; any other non-numeric value is rejected.
+    """
+    label = f"{asset.name} (FRED {asset.symbol})"
+    if frame is None or frame.empty:
+        raise RuntimeError(f"No FRED history for {label}; no substitute was selected.")
+    missing = {"observation_date", asset.symbol} - set(frame.columns)
+    if missing:
+        raise ValueError(f"{label}: FRED response lacks columns {sorted(missing)}.")
+    raw = frame[asset.symbol].astype("string").str.strip()
+    unpublished = raw.isna() | raw.isin(["", "."])
+    dates = pd.to_datetime(frame["observation_date"], format="%Y-%m-%d", errors="coerce")
+    values = pd.to_numeric(raw.where(~unpublished), errors="coerce").astype(float)
+    if dates.isna().any() or (values.isna() & ~unpublished).any():
+        raise ValueError(f"{label}: FRED response contains unparseable dates or non-numeric values.")
+    series = pd.Series(values.to_numpy(), index=pd.DatetimeIndex(dates, name="Date"), name=asset.name)
+    series = series[~unpublished.to_numpy()]
+    duplicated = series.index.duplicated(keep=False)
+    if duplicated.any():
+        if (series[duplicated].groupby(level=0).nunique() > 1).any():
+            raise ValueError(f"{label}: FRED response has conflicting values for the same date.")
+        series = series[~series.index.duplicated()]
+    series = series.sort_index()
+    series = series.loc[series.index < pd.Timestamp(end)]
+    if series.empty:
+        raise RuntimeError(f"No FRED history for {label} before {end}; no substitute was selected.")
+    validate_history(series, asset.name)
+    return series
+
+
+class FREDProvider:
+    """Single FRED boundary: public fredgraph CSV (no API key), with auditable snapshots."""
+    name = "FRED"
+
+    def __init__(self, cache_dir: Path, *, refresh: bool = False,
+                 fetch_csv: Callable[[str, str], str] | None = None):
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.refresh = refresh
+        self._fetch_csv = fetch_csv or self._download
+
+    @staticmethod
+    def _download(series_id: str, last: str) -> str:
+        from urllib.parse import urlencode
+        from urllib.request import urlopen
+        with urlopen(f"{FRED_CSV_URL}?{urlencode({'id': series_id, 'coed': last})}", timeout=60) as response:
+            return response.read().decode("utf-8")
+
+    def history(self, asset: Asset, end: str) -> pd.Series:
+        if FRED_SERIES.fullmatch(asset.symbol) is None:
+            raise ValueError(f"{asset.name}: invalid FRED series id '{asset.symbol}'.")
+        # FRED's coed is inclusive; the study end is exclusive.
+        last = (pd.Timestamp(end) - pd.Timedelta(days=1)).date().isoformat()
+        params = {"series_id": asset.symbol, "url": FRED_CSV_URL, "to_date": last}
+        path, manifest = _snapshot_paths(self.cache_dir, params)
+        if path.exists() and manifest.exists() and not self.refresh:
+            result = _read_snapshot(path, manifest, params, asset)
+        else:
+            from io import StringIO
+            frame = pd.read_csv(StringIO(self._fetch_csv(asset.symbol, last)), dtype=str, keep_default_na=False)
+            result = normalize_fred_series(frame, asset, end)
+            _write_snapshot(path, manifest, result, frame, self.name, params, asset.currency)
+        validate_history(result, asset.name)
+        if (result.index >= pd.Timestamp(end)).any():
+            raise ValueError(f"{asset.name}: provider returned dates at or beyond the exclusive end.")
+        return result
+
+
 @dataclass
 class MarketData:
     native: dict[str, pd.Series]
@@ -238,7 +314,8 @@ def provider_router(config: Config, provider: Provider | Mapping[str, Provider] 
     if provider is None and config.provider != "yahoo":
         raise ValueError("Pass a provider instance for this provider configuration.")
     factories = {"yahoo": lambda: YahooProvider(config.cache_dir),
-                 "msci": lambda: MSCIProvider(config.cache_dir / "msci")}
+                 "msci": lambda: MSCIProvider(config.cache_dir / "msci"),
+                 "fred": lambda: FREDProvider(config.cache_dir / "fred")}
     instances = dict(provider or {})
 
     def route(asset: Asset) -> Provider:
@@ -258,10 +335,13 @@ def load_market_data(config: Config, provider: Provider | Mapping[str, Provider]
         if (series.index >= pd.Timestamp(config.end)).any():
             raise ValueError(f"{name}: history extends beyond the exclusive configured end date.")
     fx = None
+    fx_source = None
     if any(a.currency == "USD" for a in config.assets):
+        # Quote convention is USD per EUR (1 EUR = X USD); to_eur divides USD values by it.
         fx_asset = Asset("EURUSD", config.fx_symbol, "USD per EUR FX quote", "USD", "Price Return", "None",
-                         provider="yahoo")
-        fx = route(fx_asset).history(fx_asset, config.end)
+                         provider=config.fx_provider)
+        fx_source = route(fx_asset)
+        fx = fx_source.history(fx_asset, config.end)
         validate_history(fx, "EURUSD")
         if (fx.index >= pd.Timestamp(config.end)).any():
             raise ValueError("FX history extends beyond the exclusive configured end date.")
@@ -273,11 +353,15 @@ def load_market_data(config: Config, provider: Provider | Mapping[str, Provider]
         eur = normalized[asset.name]
         source = route(asset)
         detail = getattr(source, "source_detail", None)
+        usd = asset.currency == "USD"
         rows.append({"Asset": asset.name, "Provider": source.name, "Symbol": asset.symbol,
                      "Source detail": detail(asset) if detail else "",
                      "Instrument / benchmark": asset.instrument, "Return type": asset.return_type,
                      "Native currency": asset.currency, "Converted to": "EUR",
-                     "FX series used": config.fx_symbol if asset.currency == "USD" else "None",
+                     "FX provider": fx_source.name if usd else "None",
+                     "FX series used": config.fx_symbol if usd else "None",
+                     "FX convention": "USD per EUR" if usd else "None",
+                     "FX start date": fx.first_valid_index() if usd else pd.NaT,
                      "Raw start date": raw.first_valid_index(), "Raw end date": raw.last_valid_index(),
                      "Raw observations": raw.count(), "Raw missing observations": int(raw.isna().sum()),
                      "FX missing on observed sessions": int((raw.notna() & to_eur(raw, asset.currency, fx).isna()).sum()),
