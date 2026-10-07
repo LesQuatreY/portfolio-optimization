@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 from portfolio_lab.config import configure_universe, load_config
 from portfolio_lab.assets import ASSET_CATALOGUE, Asset
+from portfolio_lab.covariance import estimate_covariance
 from portfolio_lab.data import YahooProvider, load_market_data, study_coverage
 from portfolio_lab.leverage import add_leverage
 from portfolio_lab.metrics import compute_asset_metrics
@@ -90,8 +91,8 @@ def test_leverage_drives_returns_labels_and_optimizer_inputs(config, portfolio_p
         assert diagnostics.empty
         # Optimizer inputs are exactly the native series, not relabelled synthetic paths.
         pd.testing.assert_frame_equal(prices, common)
-        pd.testing.assert_frame_equal(result.covariance,
-                                      common.pct_change().dropna().cov() * cfg.trading_days)
+        native_estimate = estimate_covariance(common.pct_change().dropna(), cfg.covariance_method, cfg.trading_days)
+        pd.testing.assert_frame_equal(result.covariance, native_estimate.matrix)
         assert not any(" x" in label for label in list(stats.index) + list(result.summary.index))
 
 

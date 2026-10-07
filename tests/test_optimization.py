@@ -6,6 +6,8 @@ from portfolio_lab.optimization import PortfolioOptimizer, select_frontier_asset
 
 
 def test_optimization_independent_risk_growth_and_feasibility(config, portfolio_prices):
+    # The analytic optimum below is a property of the sample covariance.
+    config = replace(config, covariance_method="sample")
     optimizer = PortfolioOptimizer(portfolio_prices, config)
     result = optimizer.run()
     # Independent known optimum: uncorrelated shocks, variance ratio 4:1.

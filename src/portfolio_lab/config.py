@@ -6,6 +6,7 @@ import math
 
 
 from .assets import Asset, resolve_assets
+from .covariance import validate_covariance_method
 
 
 @dataclass(frozen=True)
@@ -18,6 +19,8 @@ class Config:
         ("Agressif", .40), ("Très agressif", .50),
     )
     include_leveraged_in_frontier: bool = True
+    # Optimizer risk model: "ledoit_wolf" (shrinkage) or "sample" (historical sample covariance).
+    covariance_method: str = "ledoit_wolf"
     trading_days: int = 252
     calendar_days_per_year: float = 365.25
     risk_free_rate: float = 0.
@@ -54,6 +57,7 @@ class Config:
             raise ValueError("Invalid asset metadata or unsupported currency/return type/provider.")
         if self.fx_provider not in {"fred", "yahoo"} or not self.fx_symbol.strip():
             raise ValueError("FX must come from a supported provider ('fred' or 'yahoo') with a series id.")
+        validate_covariance_method(self.covariance_method)
         if self.base_currency != "EUR":
             raise ValueError("This study supports EUR as base currency.")
         if not isinstance(self.include_leveraged_in_frontier, bool):

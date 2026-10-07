@@ -7,6 +7,7 @@ from .config import Config
 from .metrics import compute_asset_metrics
 from .leverage import leveraged_name
 from .returns import simple_returns
+from .covariance import estimate_covariance
 
 
 @dataclass
@@ -18,6 +19,8 @@ class OptimizationResults:
     covariance: pd.DataFrame
     dominance: pd.DataFrame
     solver_log: pd.DataFrame
+    covariance_estimator: str = "Sample"
+    covariance_shrinkage: float | None = None
 
 
 def select_frontier_assets(config: Config) -> list[str]:
@@ -26,7 +29,14 @@ def select_frontier_assets(config: Config) -> list[str]:
 
 
 class PortfolioOptimizer:
-    """Owns explicit numerical inputs; no notebook globals or provider dependency."""
+    """Owns explicit numerical inputs; no notebook globals or provider dependency.
+
+    Risk (minimum-volatility and Sharpe objectives, volatility ceilings, frontier grid)
+    uses the configured covariance estimate of these prices' returns only, reported as
+    "Estimated volatility". "Volatility", "Sharpe", CAGR and drawdown remain the realized
+    historical metrics of the constant-weight portfolio; with the sample estimator the
+    two volatilities coincide.
+    """
 
     def __init__(self, prices: pd.DataFrame, config: Config):
         self.config = config
@@ -34,7 +44,8 @@ class PortfolioOptimizer:
         self.returns = simple_returns(prices)
         self.R = self.returns.to_numpy()
         self.centered = self.R - self.R.mean(axis=0)
-        self.covariance = self.returns.cov() * config.trading_days
+        self.estimate = estimate_covariance(self.returns, config.covariance_method, config.trading_days)
+        self.covariance = self.estimate.matrix
         self.sigma = self.covariance.to_numpy()
         self.mu = self.R.mean(axis=0) * config.trading_days
         self.n = prices.shape[1]
@@ -43,11 +54,17 @@ class PortfolioOptimizer:
         self.equal = np.full(self.n, 1 / self.n)
         self.variance_scale = max(float(np.diag(self.sigma).max()), 1e-12)
 
-    def variance(self, w):
-        # Algebraically w.T @ Sigma @ w, evaluated without cancellation near a
+    def realized_variance(self, w):
+        # Algebraically w.T @ Sample @ w, evaluated without cancellation near a
         # perfect hedge. A covariance quadratic can lose precision at zero risk.
         centered_portfolio = self.centered @ w
         return float(centered_portfolio @ centered_portfolio * self.config.trading_days / (len(self.R) - 1))
+
+    def variance(self, w):
+        """Risk-model variance w.T @ Sigma @ w for the configured covariance estimator."""
+        if self.estimate.method == "sample":
+            return self.realized_variance(w)
+        return float(w @ self.sigma @ w)
 
     def growth_objective(self, w):
         factors = np.maximum(1 + self.R @ w, np.finfo(float).tiny)
@@ -102,14 +119,14 @@ class PortfolioOptimizer:
         daily = self.R @ w
         factors = 1 + daily
         cagr = -1. if (factors <= 0).any() else float(np.expm1(np.log(factors).sum() / self.years))
-        vol = np.sqrt(max(self.variance(w), 0))
-        covariance_variance = float(w @ self.sigma @ w)
-        np.testing.assert_allclose(vol**2, covariance_variance, rtol=1e-9, atol=1e-14)
+        estimated = np.sqrt(max(self.variance(w), 0))
+        vol = np.sqrt(max(self.realized_variance(w), 0))
+        np.testing.assert_allclose(estimated**2, float(w @ self.sigma @ w), rtol=1e-9, atol=1e-14)
         np.testing.assert_allclose(vol, daily.std(ddof=1) * np.sqrt(self.config.trading_days), rtol=1e-9, atol=1e-12)
         nav = np.r_[1., np.cumprod(factors)]
         drawdown = float((nav / np.maximum.accumulate(nav) - 1).min())
         mean = float(self.mu @ w)
-        return {"CAGR": cagr, "Mean return annualized": mean, "Volatility": vol,
+        return {"CAGR": cagr, "Mean return annualized": mean, "Volatility": vol, "Estimated volatility": estimated,
                 "Max Drawdown": drawdown, "Sharpe": (mean - self.config.risk_free_rate) / vol if vol > 0 else np.nan,
                 "Calmar": cagr / abs(drawdown) if drawdown < 0 else np.nan,
                 "weights": pd.Series(w, index=self.prices.columns), "Success": True,
@@ -118,12 +135,13 @@ class PortfolioOptimizer:
     def target(self, ceiling: float, minimum: dict, maximum: dict, name: str):
         if not np.isfinite(ceiling) or ceiling < 0:
             raise ValueError("Risk ceiling must be finite and nonnegative.")
-        if ceiling < minimum["Volatility"] - self.config.tolerance:
+        # Ceilings bound the risk-model (estimated) volatility.
+        if ceiling < minimum["Estimated volatility"] - self.config.tolerance:
             return {"weights": None, "Success": False, "Solver status": None,
                     "Status": "Infeasible: below minimum achievable volatility", "Risk ceiling": ceiling}
-        if ceiling >= maximum["Volatility"]:
+        if ceiling >= maximum["Estimated volatility"]:
             result = {**maximum, "Status": "Maximum CAGR reached; unused risk allowance"}
-        elif ceiling <= minimum["Volatility"] + 1e-10:
+        elif ceiling <= minimum["Estimated volatility"] + 1e-10:
             result = {**minimum, "Status": "Minimum achievable volatility"}
         else:
             result = self.solve(self.growth_objective, self.growth_gradient,
@@ -145,7 +163,8 @@ class PortfolioOptimizer:
         portfolios = self.core_portfolios()
         minimum, maximum = portfolios["Minimum Volatility"], portfolios["Maximum CAGR"]
         rows = []
-        for i, risk in enumerate(np.linspace(minimum["Volatility"], maximum["Volatility"], self.config.frontier_points)):
+        for i, risk in enumerate(np.linspace(minimum["Estimated volatility"], maximum["Estimated volatility"],
+                                             self.config.frontier_points)):
             rows.append(self.target(float(risk), minimum, maximum, f"Frontier {i}"))
         frontier = pd.DataFrame(rows)
         for name, risk in self.config.targets:
@@ -160,20 +179,23 @@ class PortfolioOptimizer:
             single = self.metrics(np.eye(self.n)[i])
             np.testing.assert_allclose([single["CAGR"], single["Volatility"]],
                 [standalone.loc[asset, "CAGR"], standalone.loc[asset, "Volatility annualized"]], atol=1e-10)
-            risk = single["Volatility"]
-            if maximum["Volatility"] <= risk:
+            # Dominance at the asset's own risk-model volatility (equal to realized for "sample").
+            risk = single["Estimated volatility"]
+            if maximum["Estimated volatility"] <= risk:
                 optimal = maximum
-            elif risk <= minimum["Volatility"] + 1e-10:
+            elif risk <= minimum["Estimated volatility"] + 1e-10:
                 optimal = minimum
             else:
                 optimal = self.solve(self.growth_objective, self.growth_gradient, np.eye(self.n)[i],
                                      f"Dominance {asset}", risk)
             if optimal["CAGR"] < single["CAGR"] - self.config.tolerance:
                 raise RuntimeError(f"Frontier does not dominate {asset} at its own risk.")
-            dominance.append({"Asset": asset, "100% CAGR": single["CAGR"], "100% volatility": risk,
-                              "Frontier CAGR": optimal["CAGR"], "Frontier volatility": optimal["Volatility"]})
+            dominance.append({"Asset": asset, "100% CAGR": single["CAGR"], "100% volatility": single["Volatility"],
+                              "Frontier CAGR": optimal["CAGR"], "Frontier volatility": optimal["Volatility"],
+                              "100% estimated volatility": risk,
+                              "Frontier estimated volatility": optimal["Estimated volatility"]})
         if ((np.diff(frontier["CAGR"]) < -self.config.tolerance).any()
-                or (np.diff(frontier["Volatility"]) < -self.config.tolerance).any()):
+                or (np.diff(frontier["Estimated volatility"]) < -self.config.tolerance).any()):
             raise RuntimeError("Frontier upper branch is not monotonic.")
         summary = pd.DataFrame({name: {k: v for k, v in p.items() if k != "weights"}
                                 for name, p in portfolios.items()}).T.rename_axis("Portfolio")
@@ -181,7 +203,8 @@ class PortfolioOptimizer:
                                 else pd.Series(np.nan, index=self.prices.columns)
                                 for name, p in portfolios.items()}).T.rename_axis("Portfolio")
         return OptimizationResults(portfolios, frontier, summary, weights, self.covariance,
-                                   pd.DataFrame(dominance).set_index("Asset"), pd.DataFrame(self.log))
+                                   pd.DataFrame(dominance).set_index("Asset"), pd.DataFrame(self.log),
+                                   self.estimate.label, self.estimate.shrinkage)
 
 
 def optimize_frontier(prices: pd.DataFrame, config: Config) -> OptimizationResults:

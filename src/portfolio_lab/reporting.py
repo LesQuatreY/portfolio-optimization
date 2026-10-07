@@ -45,13 +45,16 @@ def validate_study(prices, optimization, config) -> dict:
         np.testing.assert_allclose(result["Volatility"], daily.std(ddof=1) * np.sqrt(config.trading_days), atol=1e-12)
         np.testing.assert_allclose(result["Max Drawdown"], (nav / np.maximum.accumulate(nav) - 1).min(), atol=1e-12)
         if "Risk ceiling" in result and pd.notna(result["Risk ceiling"]):
-            violations.append(float(result["Volatility"] - result["Risk ceiling"]))
+            # Ceilings constrain the optimizer's risk-model volatility.
+            violations.append(float(result["Estimated volatility"] - result["Risk ceiling"]))
     eigenvalue = float(np.linalg.eigvalsh(optimization.covariance).min())
     largest_violation = max([0., *violations])
     if finite_count or eigenvalue < -1e-10 or largest_violation > config.tolerance:
         raise RuntimeError("Return finiteness, covariance PSD or risk ceiling validation failed.")
     final_attempts = optimization.solver_log.groupby("Portfolio", sort=False).tail(1)
-    return {"portfolio_weight_sums": weight_sums, "minimum_portfolio_weight": minimum_weight,
+    return {"covariance_estimator": optimization.covariance_estimator,
+            "covariance_shrinkage": optimization.covariance_shrinkage,
+            "portfolio_weight_sums": weight_sums, "minimum_portfolio_weight": minimum_weight,
             "maximum_weight_sum_error": max(abs(value - 1) for value in weight_sums.values()),
             "largest_volatility_ceiling_violation": largest_violation,
             "nonfinite_final_returns": finite_count, "common_observations": len(prices),

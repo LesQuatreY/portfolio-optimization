@@ -15,6 +15,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 from .config import Config
+from .covariance import COVARIANCE_METHODS
 from .metrics import compute_asset_metrics
 from .optimization import PortfolioOptimizer, select_frontier_assets
 from .returns import simple_returns
@@ -37,11 +38,14 @@ def window_prices(prices: pd.DataFrame, start, end=None) -> pd.DataFrame:
 
 def optimize_weights(train_prices: pd.DataFrame, config: Config,
                      portfolios: Sequence[str] = OPTIMIZED) -> tuple[dict[str, pd.Series], pd.DataFrame]:
-    """Engine portfolios estimated on exactly these prices (and nothing else)."""
-    core = PortfolioOptimizer(train_prices, config).core_portfolios()
+    """Engine portfolios estimated on exactly these prices (and nothing else), including the covariance fit."""
+    optimizer = PortfolioOptimizer(train_prices, config)
+    core = optimizer.core_portfolios()
     weights = {name: core[name]["weights"] for name in portfolios}
-    metrics = pd.DataFrame({name: {k: core[name][k] for k in ("CAGR", "Volatility", "Sharpe", "Max Drawdown")}
-                            for name in portfolios}).T
+    keys = ("CAGR", "Volatility", "Estimated volatility", "Sharpe", "Max Drawdown")
+    metrics = pd.DataFrame({name: {k: core[name][k] for k in keys} for name in portfolios}).T
+    shrinkage = optimizer.estimate.shrinkage
+    metrics["Covariance shrinkage"] = np.nan if shrinkage is None else shrinkage
     return weights, metrics
 
 
@@ -164,6 +168,7 @@ class WalkForwardResult:
     turnover: pd.DataFrame
     concentration: pd.DataFrame
     stability: pd.DataFrame
+    covariance_estimator: str = "Sample"
 
     @property
     def fold_table(self) -> pd.DataFrame:
@@ -290,4 +295,5 @@ def walk_forward(prices: pd.DataFrame, config: Config, *, train_years: int = 10,
         turnover=pd.DataFrame({name: turnover(weights[name]) for name in strategies}),
         concentration=pd.concat({name: concentration(weights[name]) for name in strategies}, axis=1),
         stability=pd.concat({name: weight_stability(weights[name], zero_tolerance) for name in OPTIMIZED},
-                            names=["Portfolio"]))
+                            names=["Portfolio"]),
+        covariance_estimator=COVARIANCE_METHODS[config.covariance_method])
