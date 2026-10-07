@@ -206,6 +206,33 @@ ASSET_CATALOGUE: Mapping[str, Asset] = MappingProxyType({
             ),
             reference="https://finance.yahoo.com/quote/DBC/",
         ),
+
+        Asset(
+    "US Real Estate",
+    "IYR",
+    "iShares U.S. Real Estate ETF; US real estate equities and REITs",
+    "USD",
+    "Adjusted price",
+    "Yahoo dividend/split adjustments; distributions assumed reinvested",
+    (
+        "US real estate exposure rather than global real estate. "
+        "ETF fees and tracking differences apply."
+    ),
+    reference="https://www.ishares.com/us/products/239520/ishares-us-real-estate-etf",
+    ),
+    Asset(
+    "Europe",
+    "IEV",
+    "iShares Europe ETF; developed European equities",
+    "USD",
+    "Adjusted price",
+    "Yahoo dividend/split adjustments; distributions assumed reinvested",
+    (
+        "Tracks European developed equities through the S&P Europe 350 Index. "
+        "ETF fees and tracking differences apply."
+    ),
+    reference="https://www.ishares.com/us/products/239736/IEV",
+    ),
     )
 })
 
