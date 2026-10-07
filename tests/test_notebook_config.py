@@ -202,7 +202,7 @@ def test_cac_index_is_not_dividend_adjusted(monkeypatch, tmp_path):
 
     monkeypatch.setattr(yf, "Ticker", Ticker)
     monkeypatch.setattr(yf, "set_tz_cache_location", lambda path: None)
-    asset = next(asset for asset in load_config().assets if asset.name == "CAC 40")
+    asset = ASSET_CATALOGUE["PX1GR.PA"]
     assert asset.symbol == "PX1GR.PA" and asset.return_type == "Gross Return"
     provider = YahooProvider(tmp_path)
     result = provider.history(asset, "2026-10-05")

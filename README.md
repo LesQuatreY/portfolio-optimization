@@ -10,6 +10,7 @@ The notebook is an orchestration layer. Configuration, data validation, FX norma
 portfolio-optimization/
   notebooks/
     portfolio_analysis.ipynb       Lightweight study entry point
+    portfolio_robustness.ipynb     Subperiod stability and walk-forward out-of-sample validation
     archive/draft.ipynb            Original notebook, for regression audit
   src/portfolio_lab/
     assets.py                     Central ticker catalogue and metadata resolution
@@ -22,6 +23,7 @@ portfolio-optimization/
     optimization.py               SLSQP growth frontier, Sharpe and volatility caps
     plotting.py                   Charts and display allocations
     reporting.py                  CSV evidence and independent numerical checks
+    robustness.py                 Subperiod re-estimation, annual walk-forward OOS, turnover, HHI
   tests/                          Offline pytest fixtures and legacy regression
   outputs/                        Executed notebook, tables, figures and audit logs
   run.py                          Fresh-kernel execution with repository-local caches
@@ -112,6 +114,16 @@ Metadata for every configured exposure includes provider, symbol, instrument, cu
 Genuine TR benchmark sources are preferred when their histories are accessible and usable. If a history is absent, the provider fails explicitly: **there is no automatic switch to a price index or ETF**. Any deliberately chosen adjusted ETF proxy is configured and disclosed with its own shorter history, expenses and benchmark mismatch. A future provider can supply the desired benchmark without changing the engine.
 
 Benchmark references: [Nasdaq XNDX](https://indexes.nasdaqomx.com/Index/Overview/xndx), [S&P 500](https://www.spglobal.com/spdji/en/indices/equity/sp-500/), [Dow Jones Industrial Average](https://www.spglobal.com/spdji/en/indices/equity/dow-jones-industrial-average/) and [CAC 40 GR](https://live.euronext.com/en/product/indices/QS0011131834-XPAR). See the executed provenance table for the configured Yahoo symbols and actual available dates.
+
+## Robustness and out-of-sample validation
+
+`notebooks/portfolio_robustness.ipynb` asks a different question than the main notebook: how stable is the optimized portfolio through time, and how does it perform out of sample? It starts from the same `load_config()` defaults (universe, providers, EUR conversion, leverage, engine settings); all logic is in `portfolio_lab.robustness`, which calls the engine's `PortfolioOptimizer.core_portfolios()` (Minimum Volatility, Maximum CAGR, multi-start Maximum Sharpe) rather than re-implementing it.
+
+* **Full-sample optimization** (main notebook) is descriptive and in-sample.
+* **Subperiod stability** re-estimates the engine independently on 2001–2010, 2011–2020 and 2021–latest (actual common dates). It is still in-sample within each period and is **not** an out-of-sample test. Per-asset mean/min/max/sample-std weight and the share of near-zero (< 1e-4) weights summarize stability.
+* **Walk-forward** is the out-of-sample test. For each calendar test year, Maximum Sharpe and Minimum Volatility are estimated on the previous 10 full calendar years only, frozen, and applied to that year only. Folds come from the actual common history (a training window needs an observation before its first year as its return base); the final year can be incomplete and is flagged. Equal Weight uses the same optimizer universe; MSCI World is its realized EUR return. The OOS curve is the chronological concatenation of test-year returns only, and its CAGR/volatility/Sharpe/drawdown come from `compute_asset_metrics`.
+
+Weights follow the engine's convention: constant targets rebalanced at every common observation; walk-forward re-estimates the targets annually. Turnover is `0.5 × Σ|w_t − w_{t−1}|` between consecutive annual targets (the first allocation has none; within-year rebalancing to target is not counted). Concentration is `HHI = Σ w²` and effective number of assets `1 / HHI`; it is diagnostic only, with no weight caps imposed. OOS results are for evaluation and are not used to tune anything; they are not evidence of future performance.
 
 ## Data layer and reproducibility
 

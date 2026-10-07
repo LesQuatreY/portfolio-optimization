@@ -130,7 +130,8 @@ class PortfolioOptimizer:
                                 minimum["weights"].to_numpy(), name, ceiling)
         return {**result, "Risk ceiling": ceiling}
 
-    def run(self) -> OptimizationResults:
+    def core_portfolios(self) -> dict[str, dict]:
+        """Minimum Volatility, Maximum CAGR and multi-start Maximum Sharpe, from these prices only."""
         minimum = self.solve(lambda w: self.variance(w) / self.variance_scale,
                              lambda w: 2 * self.sigma @ w / self.variance_scale, self.equal, "Minimum Volatility")
         maximum = self.solve(self.growth_objective, self.growth_gradient, self.equal, "Maximum CAGR")
@@ -138,7 +139,11 @@ class PortfolioOptimizer:
                       for i, start in enumerate([self.equal, minimum["weights"].to_numpy(),
                                                 maximum["weights"].to_numpy(), *np.eye(self.n)])]
         sharpe = min(candidates, key=lambda p: self.sharpe_objective(p["weights"].to_numpy()))
-        portfolios = {"Minimum Volatility": minimum, "Maximum CAGR": maximum, "Maximum Sharpe": sharpe}
+        return {"Minimum Volatility": minimum, "Maximum CAGR": maximum, "Maximum Sharpe": sharpe}
+
+    def run(self) -> OptimizationResults:
+        portfolios = self.core_portfolios()
+        minimum, maximum = portfolios["Minimum Volatility"], portfolios["Maximum CAGR"]
         rows = []
         for i, risk in enumerate(np.linspace(minimum["Volatility"], maximum["Volatility"], self.config.frontier_points)):
             rows.append(self.target(float(risk), minimum, maximum, f"Frontier {i}"))
