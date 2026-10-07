@@ -22,6 +22,7 @@ def test_notebook_defaults_match_package_and_can_be_overridden():
     namespace = dict(configure_universe=configure_universe, load_config=load_config, project_dir=Path("."))
     exec("".join(cell["source"]), namespace)
     assert namespace["config"] == load_config()
+    assert namespace["config"].leverage == ()
     del namespace["assets"]["Dow Jones"]
     overridden = configure_universe(load_config(), namespace["assets"], namespace["leveraged_assets"])
     assert "Dow Jones" not in [asset.name for asset in overridden.assets]
@@ -31,7 +32,67 @@ def test_missing_leveraged_underlying_fails_before_download():
     assets = {asset.name: asset.symbol
               for asset in load_config().assets if asset.name != "Apple"}
     with pytest.raises(ValueError, match="Apple.*not in the configured asset universe"):
-        configure_universe(load_config(), assets)
+        configure_universe(load_config(), assets, {"Apple": 1.5})
+
+
+DEFAULT_ASSETS = {asset.name: asset.symbol for asset in load_config().assets}
+EXPLICIT = {"Apple": 1.5, "Nasdaq 100": 2.0}
+
+
+def test_package_default_has_no_leverage():
+    assert load_config().leverage == ()
+
+
+@pytest.mark.parametrize("leveraged_assets", [None, {}, {"Apple": 1.0, "Nasdaq 100": 1}])
+def test_none_empty_or_unit_leverage_clears_previous_leverage(leveraged_assets):
+    leveraged = configure_universe(load_config(), DEFAULT_ASSETS, EXPLICIT)
+    assert leveraged.leverage == (("Apple", 1.5), ("Nasdaq 100", 2.0))
+    cleared = configure_universe(leveraged, DEFAULT_ASSETS, leveraged_assets)
+    assert cleared.leverage == ()
+    assert cleared == load_config()
+
+
+def test_explicit_leverage_is_applied():
+    cfg = configure_universe(load_config(), DEFAULT_ASSETS, EXPLICIT)
+    assert cfg.leverage == (("Apple", 1.5), ("Nasdaq 100", 2.0))
+
+
+@pytest.mark.parametrize("factor", [.5, 0, -1])
+def test_sub_unit_leverage_rejected(factor):
+    with pytest.raises(ValueError, match="above 1"):
+        configure_universe(load_config(), DEFAULT_ASSETS, {"Apple": factor})
+
+
+@pytest.mark.parametrize("leveraged_assets,labels", [
+    (None, ["Apple", "Nasdaq 100"]), ({}, ["Apple", "Nasdaq 100"]),
+    (EXPLICIT, ["Apple x1.5", "Nasdaq 100 x2"]),
+])
+def test_leverage_drives_returns_labels_and_optimizer_inputs(config, portfolio_prices, leveraged_assets, labels):
+    catalogue = {
+        "AAA": Asset("Apple", "AAA", "equity", "EUR", "Adjusted price", "reinvested"),
+        "NNN": Asset("Nasdaq 100", "NNN", "equity", "EUR", "Adjusted price", "reinvested"),
+    }
+    cfg = configure_universe(config, {"Apple": "AAA", "Nasdaq 100": "NNN"}, leveraged_assets, catalogue=catalogue)
+    common = portfolio_prices.set_axis(["Apple", "Nasdaq 100"], axis=1)
+    native = {name: common[name] for name in common}
+    prices, diagnostics = add_leverage(common, native, None, cfg)
+    result = optimize_frontier(prices, cfg)
+    assert list(result.weights) == labels
+    assert list(result.covariance) == labels
+    stats = compute_asset_metrics(prices)
+    if cfg.leverage:
+        assert list(diagnostics["Asset"]) == labels
+        # Daily-reset returns are the underlying's returns times the factor.
+        for (name, factor), label in zip(cfg.leverage, labels):
+            np.testing.assert_allclose(prices[label].pct_change().dropna(),
+                                       factor * common[name].pct_change().dropna())
+    else:
+        assert diagnostics.empty
+        # Optimizer inputs are exactly the native series, not relabelled synthetic paths.
+        pd.testing.assert_frame_equal(prices, common)
+        pd.testing.assert_frame_equal(result.covariance,
+                                      common.pct_change().dropna().cov() * cfg.trading_days)
+        assert not any(" x" in label for label in list(stats.index) + list(result.summary.index))
 
 
 def test_unknown_symbol_is_informative(config):
@@ -43,7 +104,7 @@ def test_unknown_symbol_is_informative(config):
     ("AAPL", "USD", "Adjusted price"), ("QQQ", "USD", "Adjusted price"),
     ("^SP500TR", "USD", "Gross Return"), ("DIA", "USD", "Adjusted price"),
     ("PX1GR.PA", "EUR", "Gross Return"), ("GC=F", "USD", "Price Return"),
-    ("IWDA.AS", "EUR", "Adjusted price"),
+    ("IWDA.AS", "EUR", "Adjusted price"), ("MSCI:990100:NETR", "USD", "Net Total Return"),
 ])
 def test_catalogue_recovers_financial_metadata(symbol, currency, return_type):
     cfg = configure_universe(load_config(), {"My exposure": symbol}, {})
@@ -55,7 +116,7 @@ def test_catalogue_recovers_financial_metadata(symbol, currency, return_type):
 def test_add_registered_asset_preserves_existing_metadata():
     original = load_config()
     assets = {asset.name: asset.symbol for asset in original.assets}
-    assets["MSCI World"] = "IWDA.AS"
+    assets["iShares Core MSCI World"] = "IWDA.AS"
     cfg = configure_universe(original, assets)
     assert cfg.assets[:-1] == original.assets
     assert cfg.assets[-1] == ASSET_CATALOGUE["IWDA.AS"]

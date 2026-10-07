@@ -1,9 +1,11 @@
 """Provider boundary, auditable snapshots and observed-date normalization."""
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 import hashlib
 import json
+import re
 import numpy as np
 import pandas as pd
 from .config import Asset, Config
@@ -30,6 +32,30 @@ def validate_history(series: pd.Series, name: str) -> None:
         raise ValueError(f"{name}: missing history or invalid observed values.")
 
 
+def _snapshot_paths(cache_dir: Path, params: dict) -> tuple[Path, Path]:
+    key = hashlib.sha256(json.dumps(params, sort_keys=True).encode()).hexdigest()[:20]
+    path = cache_dir / f"{key}.csv"
+    return path, path.with_suffix(".json")
+
+
+def _read_snapshot(path: Path, manifest: Path, params: dict, asset: Asset) -> pd.Series:
+    meta = json.loads(manifest.read_text(encoding="utf-8"))
+    if meta["parameters"] != params or meta["sha256"] != hashlib.sha256(path.read_bytes()).hexdigest():
+        raise ValueError(f"Snapshot integrity check failed for {asset.name}.")
+    # Round-trip parsing reproduces the %.17g-written floats bit for bit.
+    frame = pd.read_csv(path, index_col=0, parse_dates=True, float_precision="round_trip")
+    return frame["Value"].astype(float).rename(asset.name)
+
+
+def _write_snapshot(path: Path, manifest: Path, result: pd.Series, source: pd.DataFrame,
+                    provider: str, params: dict, vendor_currency: str | None) -> None:
+    result.rename("Value").to_csv(path, float_format="%.17g")
+    source.to_csv(path.with_suffix(".source.csv"), float_format="%.17g")
+    manifest.write_text(json.dumps({"provider": provider, "parameters": params,
+        "downloaded_at_utc": pd.Timestamp.now(tz="UTC").isoformat(), "vendor_currency": vendor_currency,
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}, indent=2), encoding="utf-8")
+
+
 class YahooProvider:
     """Single yfinance boundary. Snapshots include download parameters and hashes."""
     name = "Yahoo Finance"
@@ -45,14 +71,9 @@ class YahooProvider:
         import yfinance as yf
         params = {"symbol": asset.symbol, "end_exclusive": end, "interval": "1d",
                   "auto_adjust": asset.return_type == "Adjusted price", "repair": False}
-        key = hashlib.sha256(json.dumps(params, sort_keys=True).encode()).hexdigest()[:20]
-        path = self.cache_dir / f"{key}.csv"
-        manifest = path.with_suffix(".json")
+        path, manifest = _snapshot_paths(self.cache_dir, params)
         if path.exists() and manifest.exists() and not self.refresh:
-            meta = json.loads(manifest.read_text(encoding="utf-8"))
-            if meta["parameters"] != params or meta["sha256"] != hashlib.sha256(path.read_bytes()).hexdigest():
-                raise ValueError(f"Snapshot integrity check failed for {asset.name}.")
-            result = pd.read_csv(path, index_col=0, parse_dates=True)["Value"].rename(asset.name)
+            result = _read_snapshot(path, manifest, params, asset)
         else:
             ticker = yf.Ticker(asset.symbol)
             frame = ticker.history(period="max", end=end, interval="1d", auto_adjust=params["auto_adjust"],
@@ -66,11 +87,103 @@ class YahooProvider:
             # Preserve exchange-local session date; converting to UTC can shift dates.
             result.index = result.index.tz_localize(None).normalize()
             validate_history(result, asset.name)
-            result.rename("Value").to_csv(path, float_format="%.17g")
-            frame.to_csv(path.with_suffix(".source.csv"), float_format="%.17g")
-            manifest.write_text(json.dumps({"provider": self.name, "parameters": params,
-                "downloaded_at_utc": pd.Timestamp.now(tz="UTC").isoformat(), "vendor_currency": currency,
-                "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}, indent=2), encoding="utf-8")
+            _write_snapshot(path, manifest, result, frame, self.name, params, currency)
+        validate_history(result, asset.name)
+        if (result.index >= pd.Timestamp(end)).any():
+            raise ValueError(f"{asset.name}: provider returned dates at or beyond the exclusive end.")
+        return result
+
+
+# Canonical catalogue symbol for an official MSCI series: MSCI:<index code>:<variant>.
+MSCI_SYMBOL = re.compile(r"MSCI:(?P<code>\d{6}):(?P<variant>NETR|GRTR|STRD)")
+# msci-data variant -> this project's return classification; a mismatch is a catalogue error.
+MSCI_RETURN_TYPES = {"NETR": "Net Total Return", "GRTR": "Gross Return", "STRD": "Price Return"}
+# Earliest date accepted by the MSCI API (World NETR history itself starts 2000-12-29).
+MSCI_API_FLOOR = "2000-01-01"
+
+
+def parse_msci_symbol(asset: Asset) -> tuple[str, str]:
+    match = MSCI_SYMBOL.fullmatch(asset.symbol)
+    if match is None:
+        raise ValueError(f"{asset.name}: MSCI symbol '{asset.symbol}' must look like 'MSCI:990100:NETR'.")
+    code, variant = match["code"], match["variant"]
+    if asset.return_type != MSCI_RETURN_TYPES[variant]:
+        raise ValueError(f"{asset.name}: MSCI variant {variant} is '{MSCI_RETURN_TYPES[variant]}', "
+                         f"but the catalogue says '{asset.return_type}'.")
+    return code, variant
+
+
+def normalize_msci_levels(frame: pd.DataFrame | None, asset: Asset, end: str) -> pd.Series:
+    """msci-data DATE/LEVEL rows -> validated native-currency index levels before the exclusive end.
+
+    NETR/GRTR levels already embed reinvested dividends: pct_change() is the total return,
+    so no adjustment, dividend addition or FX conversion is applied here.
+    """
+    code, variant = parse_msci_symbol(asset)
+    label = f"{asset.name} (MSCI {code} {variant})"
+    if frame is None or frame.empty:
+        raise RuntimeError(f"No MSCI history for {label}; no substitute was selected.")
+    missing = {"DATE", "LEVEL"} - set(frame.columns)
+    if missing:
+        raise ValueError(f"{label}: MSCI response lacks columns {sorted(missing)}.")
+    for column, expected in (("INDEX_CODE", code), ("VARIANT", variant), ("CURRENCY", asset.currency)):
+        if column in frame and set(frame[column].astype(str)) != {expected}:
+            raise ValueError(f"{label}: MSCI {column} {sorted(set(frame[column].astype(str)))} "
+                             f"differs from configured {expected}.")
+    dates = pd.to_datetime(frame["DATE"], format="%Y-%m-%d", errors="coerce")
+    levels = pd.to_numeric(frame["LEVEL"], errors="coerce")
+    if dates.isna().any() or levels.isna().any() or not np.isfinite(levels.to_numpy(float)).all():
+        raise ValueError(f"{label}: MSCI response contains unparseable DATE or non-numeric LEVEL values.")
+    series = pd.Series(levels.to_numpy(float), index=pd.DatetimeIndex(dates, name="Date"), name=asset.name)
+    duplicated = series.index.duplicated(keep=False)
+    if duplicated.any():
+        if (series[duplicated].groupby(level=0).nunique() > 1).any():
+            raise ValueError(f"{label}: MSCI response has conflicting levels for the same date.")
+        series = series[~series.index.duplicated()]
+    series = series.sort_index()
+    series = series.loc[series.index < pd.Timestamp(end)]
+    if series.empty:
+        raise RuntimeError(f"No MSCI history for {label} before {end}; no substitute was selected.")
+    validate_history(series, asset.name)
+    return series
+
+
+class MSCIProvider:
+    """Single msci-data boundary for official MSCI index levels, with auditable snapshots.
+
+    Returns the index's native currency (USD for MSCI World); EUR conversion stays in
+    load_market_data like any USD asset, so the exposure remains unhedged.
+    """
+    name = "MSCI"
+
+    def __init__(self, cache_dir: Path, *, refresh: bool = False,
+                 get_levels: Callable[..., pd.DataFrame] | None = None):
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.refresh = refresh
+        self._get_levels = get_levels
+
+    def source_detail(self, asset: Asset) -> str:
+        code, variant = parse_msci_symbol(asset)
+        return (f"MSCI index code {code}; variant {variant} ({MSCI_RETURN_TYPES[variant]}); "
+                f"native {asset.currency} index levels, not an ETF adjusted price")
+
+    def history(self, asset: Asset, end: str) -> pd.Series:
+        code, variant = parse_msci_symbol(asset)
+        # msci-data's to_date is inclusive; the study end is exclusive.
+        last = (pd.Timestamp(end) - pd.Timedelta(days=1)).date().isoformat()
+        params = {"index_code": code, "variant": variant, "from_date": MSCI_API_FLOOR, "to_date": last}
+        path, manifest = _snapshot_paths(self.cache_dir, params)
+        if path.exists() and manifest.exists() and not self.refresh:
+            result = _read_snapshot(path, manifest, params, asset)
+        else:
+            get_levels = self._get_levels
+            if get_levels is None:
+                from mscidata import msci
+                get_levels = msci.get_levels
+            frame = get_levels(code, MSCI_API_FLOOR, last, variant=variant)
+            result = normalize_msci_levels(frame, asset, end)
+            _write_snapshot(path, manifest, result, frame, self.name, params, asset.currency)
         validate_history(result, asset.name)
         if (result.index >= pd.Timestamp(end)).any():
             raise ValueError(f"{asset.name}: provider returned dates at or beyond the exclusive end.")
@@ -113,23 +226,42 @@ def prepare_common_prices(history: pd.DataFrame) -> pd.DataFrame:
     return common
 
 
-def load_market_data(config: Config, provider: Provider | None = None) -> MarketData:
-    if provider is None:
-        if config.provider == "yahoo":
-            provider = YahooProvider(config.cache_dir)
-        elif config.provider == "csv":
-            provider = CSVProvider(config.cache_dir)
-        else:
-            raise ValueError("Pass a provider instance for this provider configuration.")
-    native = {a.name: provider.history(a, config.end) for a in config.assets}
+def provider_router(config: Config, provider: Provider | Mapping[str, Provider] | None = None
+                    ) -> Callable[[Asset], Provider]:
+    """Asset -> provider. A single injected provider serves every series (tests, offline);
+    a mapping is keyed by Asset.provider; otherwise each catalogued Asset.provider is built lazily."""
+    if provider is not None and not isinstance(provider, Mapping):
+        return lambda asset: provider
+    if provider is None and config.provider == "csv":
+        csv = CSVProvider(config.cache_dir)
+        return lambda asset: csv
+    if provider is None and config.provider != "yahoo":
+        raise ValueError("Pass a provider instance for this provider configuration.")
+    factories = {"yahoo": lambda: YahooProvider(config.cache_dir),
+                 "msci": lambda: MSCIProvider(config.cache_dir / "msci")}
+    instances = dict(provider or {})
+
+    def route(asset: Asset) -> Provider:
+        if asset.provider not in instances:
+            if provider is not None or asset.provider not in factories:
+                raise ValueError(f"{asset.name}: no data provider configured for '{asset.provider}'.")
+            instances[asset.provider] = factories[asset.provider]()
+        return instances[asset.provider]
+    return route
+
+
+def load_market_data(config: Config, provider: Provider | Mapping[str, Provider] | None = None) -> MarketData:
+    route = provider_router(config, provider)
+    native = {a.name: route(a).history(a, config.end) for a in config.assets}
     for name, series in native.items():
         validate_history(series, name)
         if (series.index >= pd.Timestamp(config.end)).any():
             raise ValueError(f"{name}: history extends beyond the exclusive configured end date.")
     fx = None
     if any(a.currency == "USD" for a in config.assets):
-        fx_asset = Asset("EURUSD", config.fx_symbol, "USD per EUR FX quote", "USD", "Price Return", "None")
-        fx = provider.history(fx_asset, config.end)
+        fx_asset = Asset("EURUSD", config.fx_symbol, "USD per EUR FX quote", "USD", "Price Return", "None",
+                         provider="yahoo")
+        fx = route(fx_asset).history(fx_asset, config.end)
         validate_history(fx, "EURUSD")
         if (fx.index >= pd.Timestamp(config.end)).any():
             raise ValueError("FX history extends beyond the exclusive configured end date.")
@@ -139,7 +271,10 @@ def load_market_data(config: Config, provider: Provider | None = None) -> Market
     for asset in config.assets:
         raw = native[asset.name]
         eur = normalized[asset.name]
-        rows.append({"Asset": asset.name, "Provider": provider.name, "Symbol": asset.symbol,
+        source = route(asset)
+        detail = getattr(source, "source_detail", None)
+        rows.append({"Asset": asset.name, "Provider": source.name, "Symbol": asset.symbol,
+                     "Source detail": detail(asset) if detail else "",
                      "Instrument / benchmark": asset.instrument, "Return type": asset.return_type,
                      "Native currency": asset.currency, "Converted to": "EUR",
                      "FX series used": config.fx_symbol if asset.currency == "USD" else "None",

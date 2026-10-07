@@ -11,7 +11,8 @@ from .assets import Asset, resolve_assets
 @dataclass(frozen=True)
 class Config:
     assets: tuple[Asset, ...]
-    leverage: tuple[tuple[str, float], ...] = (("Apple", 1.5), ("Nasdaq 100", 2.0))
+    # Safe default: no synthetic leverage unless explicitly requested.
+    leverage: tuple[tuple[str, float], ...] = ()
     targets: tuple[tuple[str, float], ...] = (
         ("Prudent", .15), ("Modéré", .20), ("Dynamique", .30),
         ("Agressif", .40), ("Très agressif", .50),
@@ -25,6 +26,7 @@ class Config:
     tolerance: float = 1e-7
     allocation_display_threshold: float = .01
     base_currency: str = "EUR"
+    # "yahoo": route each asset to its catalogued Asset.provider; "csv": offline files for every series.
     provider: str = "yahoo"
     fx_symbol: str = "EURUSD=X"
     # Exclusive end: excludes the current, potentially incomplete session.
@@ -42,9 +44,11 @@ class Config:
         if not names or len(set(names)) != len(names) or len({a.symbol for a in self.assets}) != len(names):
             raise ValueError("Assets must have distinct nonempty names and symbols.")
         if any(not a.name.strip() or not a.symbol.strip() or a.currency not in {"EUR", "USD"}
-               or a.return_type not in {"Price Return", "Total Return", "Gross Return", "Net Return", "Adjusted price"}
+               or a.return_type not in {"Price Return", "Total Return", "Gross Return", "Net Return",
+                                        "Net Total Return", "Adjusted price"}
+               or a.provider not in {"yahoo", "msci"}
                for a in self.assets):
-            raise ValueError("Invalid asset metadata or unsupported currency/return type.")
+            raise ValueError("Invalid asset metadata or unsupported currency/return type/provider.")
         if self.base_currency != "EUR":
             raise ValueError("This study supports EUR as base currency.")
         if not isinstance(self.include_leveraged_in_frontier, bool):
@@ -63,8 +67,9 @@ class Config:
             if name not in names:
                 raise ValueError(f"Leveraged underlying '{name}' is not in the configured asset universe. "
                                  "Restore the asset or remove its leverage entry.")
-            if not math.isfinite(factor) or factor <= 0:
-                raise ValueError(f"Invalid leverage for {name}.")
+            if not math.isfinite(factor) or factor <= 1:
+                raise ValueError(f"Invalid leverage for {name}: factors must be finite and above 1 "
+                                 "(omit the asset, or use 1, for no leverage).")
         labels = [f"{name} x{factor:g}" for name, factor in self.leverage]
         if len(set(names + labels)) != len(names + labels):
             raise ValueError("Synthetic labels collide with asset names.")
@@ -80,6 +85,7 @@ def load_config(project_dir: Path = Path(".")) -> Config:
     assets = {
         "Apple": "AAPL", "Nasdaq 100": "QQQ", "S&P 500": "^SP500TR",
         "Dow Jones": "DIA", "CAC 40": "PX1GR.PA", "Gold": "GC=F",
+        "MSCI World": "MSCI:990100:NETR",
     }
     return Config(cache_dir=Path(project_dir) / ".cache/market",
                   output_dir=Path(project_dir) / "outputs", assets=resolve_assets(assets))
@@ -92,6 +98,10 @@ def configure_universe(config: Config, assets: Mapping[str, str],
 
     Metadata comes only from the catalogue; no guessing or ticker fallback.
     An explicit catalogue can be injected for a custom provider or offline fixtures.
+    `leverage` fully replaces any existing leverage: None or {} means no leveraged assets,
+    and a factor of exactly 1 is the unleveraged asset itself, so it is dropped.
     """
-    return replace(config, assets=resolve_assets(assets, catalogue=catalogue),
-                   leverage=config.leverage if leverage is None else tuple(leverage.items()))
+    if leverage is not None and not isinstance(leverage, Mapping):
+        raise ValueError("Leveraged assets must be a mapping of asset name to factor, {} or None.")
+    selected = tuple((name, factor) for name, factor in (leverage or {}).items() if factor != 1)
+    return replace(config, assets=resolve_assets(assets, catalogue=catalogue), leverage=selected)

@@ -68,13 +68,13 @@ Select the **Portfolio Lab** kernel. Run all cells. Automatic execution uses tha
 
 `load_config()` in `config.py` retains sensible project defaults. The notebook's **User configuration** cell contains only an `assets` mapping of display name to ticker and a `leveraged_assets` mapping of name to leverage factor. `configure_universe(load_config(project_dir), assets, leveraged_assets)` resolves the selected tickers into the single effective immutable configuration passed to every analytical step. The notebook intentionally avoids duplicating technical metadata.
 
-Financial metadata is centrally registered in `ASSET_CATALOGUE` in `src/portfolio_lab/assets.py`: symbol, listing currency, instrument, return classification, distribution treatment, limitations and reference URL. Changing a ticker resolves its own metadata; it never inherits the old instrument's metadata. Supported return types are `Price Return`, `Total Return`, `Gross Return`, `Net Return` and `Adjusted price`. EUR assets need no FX conversion; USD entries automatically request the configured EURUSD series and convert upstream. Yahoo's existing provider uses adjusted prices only for `Adjusted price`; gross-return index levels are not dividend-adjusted again. Unsupported currencies fail explicitly.
+Financial metadata is centrally registered in `ASSET_CATALOGUE` in `src/portfolio_lab/assets.py`: symbol, listing currency, instrument, return classification, distribution treatment, limitations and reference URL. Changing a ticker resolves its own metadata; it never inherits the old instrument's metadata. Supported return types are `Price Return`, `Total Return`, `Gross Return`, `Net Return`, `Net Total Return` and `Adjusted price`. Each entry also names its data `provider` (`"yahoo"` by default, `"msci"` for official MSCI index levels), so selecting a symbol in the notebook routes it to the right source automatically. EUR assets need no FX conversion; USD entries automatically request the configured EURUSD series and convert upstream. Yahoo's existing provider uses adjusted prices only for `Adjusted price`; gross-return index levels are not dividend-adjusted again. Unsupported currencies fail explicitly.
 
 For example, edit the notebook configuration before its `configure_universe(...)` call:
 
 ```python
 del assets["Dow Jones"]
-assets["MSCI World"] = "IWDA.AS"  # Already registered; Amsterdam EUR listing.
+assets["iShares Core MSCI World"] = "IWDA.AS"  # Already registered; Amsterdam EUR ETF listing.
 config = configure_universe(load_config(project_dir), assets, leveraged_assets)
 ```
 
@@ -87,13 +87,13 @@ Asset("CAC 40", "PX1GR.PA", "CAC 40 Gross Return Index", "EUR", "Gross Return",
       reference="https://live.euronext.com/en/product/indices/QS0011131834-XPAR"),
 ```
 
-The catalogue and its entries are immutable at runtime. New registration happens in the package, keeping the normal notebook workflow short and the metadata auditable. IWDA's listing currency is EUR even though the fund's base currency is USD; this does not imply currency hedging. Its listing and accumulating treatment are documented by [iShares](https://www.ishares.com/uk/individual/en/products/251882/ishares-core-msci-world-ucits-etf-usd-acc).
+The catalogue and its entries are immutable at runtime. New registration happens in the package, keeping the normal notebook workflow short and the metadata auditable. IWDA's listing currency is EUR even though the fund's base currency is USD; this does not imply currency hedging. Its listing and accumulating treatment are documented by [iShares](https://www.ishares.com/uk/individual/en/products/251882/ishares-core-msci-world-ucits-etf-usd-acc). Its Yahoo history is short, so the default MSCI World exposure is the official index `MSCI:990100:NETR` instead (see below).
 
 Run **all cells** after an edit so no old notebook outputs remain in memory. To remove Apple, also remove `leveraged_assets["Apple"]`; otherwise validation explains that its leveraged underlying is missing before any download starts. The exported `effective-config.json` records the exact notebook configuration used, including assets, leverage and study parameters. The optional archived-engine regression script reads this export rather than independently reloading default assets.
 
 Use `dataclasses.replace(config, ...)` in the same cell for target volatility profiles, risk-free rate, trading-days convention, frontier resolution, provider, snapshot location and exclusive end date. The recorded end date remains exclusive and deliberately excludes the current incomplete session.
 
-The default six economic exposures originate in the old notebook: Apple, Nasdaq 100, S&P 500, Dow Jones, CAC 40 and gold. AAPL remains the primary US listing. Apple x1.5 and Nasdaq 100 x2 replace their unleveraged exposures in the optimization universe when `include_leveraged_in_frontier=True`; both versions still appear in asset statistics. Turning the switch off changes only the optimization universe.
+Six of the default economic exposures originate in the old notebook: Apple, Nasdaq 100, S&P 500, Dow Jones, CAC 40 and gold; MSCI World (official NETR index) was added since. AAPL remains the primary US listing. There is no leverage by default: `leveraged_assets = {}` (or `None`) gives a fully unleveraged study and clears any leverage already on the config, and a factor of `1` is the plain asset. Only explicit factors above 1, e.g. `{"Apple": 1.5, "Nasdaq 100": 2.0}`, create synthetic daily-reset series (`Apple x1.5`, `Nasdaq 100 x2`), which replace their unleveraged exposures in the optimization universe when `include_leveraged_in_frontier=True`; both versions still appear in asset statistics. Turning the switch off changes only the optimization universe.
 
 ## Total investor return and provenance
 
@@ -103,6 +103,7 @@ These series are deliberately distinguished:
 * **Total Return** includes distributions and reinvestment under a specified benchmark convention.
 * **Gross Return** reinvests gross dividends before withholding tax.
 * **Net Return** reinvests dividends after the benchmark's assumed withholding tax, which need not equal a particular investor's actual tax.
+* **Net Total Return** is MSCI's NETR variant (e.g. MSCI World, index code 990100): net dividends reinvested after MSCI's withholding-tax assumptions. It is an index level, not an ETF adjusted price: its `pct_change()` already is the total return, so no dividend or Yahoo adjustment is ever applied. Levels are USD and unhedged; EUR conversion uses the same EURUSD path as other USD assets.
 * **Adjusted price** for equities/ETFs uses Yahoo's split and dividend adjustment, as a practical reinvestment proxy. It is not claimed to be an independently audited gross/net benchmark. ETF adjustments inherit fees and tracking behavior of that ETF.
 * **Gold futures quotation** produces no dividends but its percentage price changes are not the total return of a rolling futures investment. Roll yield, collateral income and financing are absent.
 
@@ -114,7 +115,7 @@ Benchmark references: [Nasdaq XNDX](https://indexes.nasdaqomx.com/Index/Overview
 
 ## Data layer and reproducibility
 
-`Provider.history(asset, end)` returns a named pandas Series with an ordered, unique, timezone-free DatetimeIndex of exchange-local session dates. Observed values must be finite and strictly positive. Missing observations are allowed in raw history and are reported; duplicates, bad prices, unexpected names and bad calendars fail validation. `YahooProvider` is the only module that imports/calls yfinance; `CSVProvider` accepts one `Date,Value` CSV per configured symbol. An injected provider can replace either directly.
+`Provider.history(asset, end)` returns a named pandas Series with an ordered, unique, timezone-free DatetimeIndex of exchange-local session dates. Observed values must be finite and strictly positive. Missing observations are allowed in raw history and are reported; duplicates, bad prices, unexpected names and bad calendars fail validation. `YahooProvider` is the only module that imports/calls yfinance; `MSCIProvider` is the only one that calls `msci-data` (`msci.get_levels(code, ..., variant=...)` for symbols of the form `MSCI:<index code>:<variant>`, rejecting non-numeric levels, conflicting duplicate dates, or a currency/variant mismatch, and failing if no data is returned); `CSVProvider` accepts one `Date,Value` CSV per configured symbol. `load_market_data(config)` routes each asset by its catalogued `provider` and fetches EURUSD from Yahoo. For tests, pass either a single provider (serves every series) or a mapping such as `{"yahoo": ..., "msci": ...}`. The provenance table's `Source detail` column records the MSCI index code, variant and native currency. MSCI snapshots live in `<cache_dir>/msci` with the same hash manifests as Yahoo.
 
 Yahoo downloads use explicit daily frequency, exclusive end, adjustment based on return classification, no repair, no filling and retained actions. The snapshot directory stores value CSVs, original returned source frames and JSON manifests with download parameters, UTC download timestamp, vendor currency and SHA256 hash. Repeated runs use and verify those same snapshots. Pass `YahooProvider(config.cache_dir, refresh=True)` explicitly to download again. CSV snapshots preserve full precision. Vendor data can be revised and is not exchange-grade or independently audited; timezone alignment, dividend corrections, index coverage and futures contract stitching remain vendor risks. Licensing and redistribution restrictions must be assessed for another use of the data.
 
