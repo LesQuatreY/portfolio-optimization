@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 from .config import Config
 from .covariance import COVARIANCE_METHODS
+from .expected_returns import EXPECTED_RETURN_METHODS
 from .metrics import compute_asset_metrics
 from .optimization import PortfolioOptimizer, select_frontier_assets
 from .returns import simple_returns
@@ -44,8 +45,9 @@ def optimize_weights(train_prices: pd.DataFrame, config: Config,
     weights = {name: core[name]["weights"] for name in portfolios}
     keys = ("CAGR", "Volatility", "Estimated volatility", "Sharpe", "Max Drawdown")
     metrics = pd.DataFrame({name: {k: core[name][k] for k in keys} for name in portfolios}).T
-    shrinkage = optimizer.estimate.shrinkage
-    metrics["Covariance shrinkage"] = np.nan if shrinkage is None else shrinkage
+    for column, shrinkage in (("Covariance shrinkage", optimizer.estimate.shrinkage),
+                              ("Expected-return shrinkage", optimizer.expected.shrinkage)):
+        metrics[column] = np.nan if shrinkage is None else shrinkage
     return weights, metrics
 
 
@@ -169,6 +171,7 @@ class WalkForwardResult:
     concentration: pd.DataFrame
     stability: pd.DataFrame
     covariance_estimator: str = "Sample"
+    expected_return_estimator: str = "Sample mean"
 
     @property
     def fold_table(self) -> pd.DataFrame:
@@ -296,4 +299,5 @@ def walk_forward(prices: pd.DataFrame, config: Config, *, train_years: int = 10,
         concentration=pd.concat({name: concentration(weights[name]) for name in strategies}, axis=1),
         stability=pd.concat({name: weight_stability(weights[name], zero_tolerance) for name in OPTIMIZED},
                             names=["Portfolio"]),
-        covariance_estimator=COVARIANCE_METHODS[config.covariance_method])
+        covariance_estimator=COVARIANCE_METHODS[config.covariance_method],
+        expected_return_estimator=EXPECTED_RETURN_METHODS[config.expected_return_method])

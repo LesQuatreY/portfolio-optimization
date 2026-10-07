@@ -8,6 +8,7 @@ from .metrics import compute_asset_metrics
 from .leverage import leveraged_name
 from .returns import simple_returns
 from .covariance import estimate_covariance
+from .expected_returns import estimate_expected_returns
 
 
 @dataclass
@@ -21,6 +22,8 @@ class OptimizationResults:
     solver_log: pd.DataFrame
     covariance_estimator: str = "Sample"
     covariance_shrinkage: float | None = None
+    expected_return_estimator: str = "Sample mean"
+    expected_return_shrinkage: float | None = None
 
 
 def select_frontier_assets(config: Config) -> list[str]:
@@ -33,9 +36,11 @@ class PortfolioOptimizer:
 
     Risk (minimum-volatility and Sharpe objectives, volatility ceilings, frontier grid)
     uses the configured covariance estimate of these prices' returns only, reported as
-    "Estimated volatility". "Volatility", "Sharpe", CAGR and drawdown remain the realized
-    historical metrics of the constant-weight portfolio; with the sample estimator the
-    two volatilities coincide.
+    "Estimated volatility". The Maximum Sharpe objective uses the configured expected-return
+    estimate ("Estimated return"); Maximum CAGR, the frontier and targets maximize realized
+    historical log growth and do not use it. "Volatility", "Mean return annualized",
+    "Sharpe", CAGR and drawdown remain realized historical metrics; with the sample
+    estimators the model and realized values coincide.
     """
 
     def __init__(self, prices: pd.DataFrame, config: Config):
@@ -47,7 +52,10 @@ class PortfolioOptimizer:
         self.estimate = estimate_covariance(self.returns, config.covariance_method, config.trading_days)
         self.covariance = self.estimate.matrix
         self.sigma = self.covariance.to_numpy()
-        self.mu = self.R.mean(axis=0) * config.trading_days
+        # Realized arithmetic mean (reported metrics) vs model expected returns (Sharpe objective).
+        self.realized_mean = self.R.mean(axis=0) * config.trading_days
+        self.expected = estimate_expected_returns(self.returns, config.expected_return_method, config.trading_days)
+        self.mu = self.expected.values.to_numpy()
         self.n = prices.shape[1]
         self.years = (prices.index[-1] - prices.index[0]).days / config.calendar_days_per_year
         self.log = []
@@ -125,8 +133,9 @@ class PortfolioOptimizer:
         np.testing.assert_allclose(vol, daily.std(ddof=1) * np.sqrt(self.config.trading_days), rtol=1e-9, atol=1e-12)
         nav = np.r_[1., np.cumprod(factors)]
         drawdown = float((nav / np.maximum.accumulate(nav) - 1).min())
-        mean = float(self.mu @ w)
-        return {"CAGR": cagr, "Mean return annualized": mean, "Volatility": vol, "Estimated volatility": estimated,
+        mean = float(self.realized_mean @ w)
+        return {"CAGR": cagr, "Mean return annualized": mean, "Estimated return": float(self.mu @ w),
+                "Volatility": vol, "Estimated volatility": estimated,
                 "Max Drawdown": drawdown, "Sharpe": (mean - self.config.risk_free_rate) / vol if vol > 0 else np.nan,
                 "Calmar": cagr / abs(drawdown) if drawdown < 0 else np.nan,
                 "weights": pd.Series(w, index=self.prices.columns), "Success": True,
@@ -204,7 +213,8 @@ class PortfolioOptimizer:
                                 for name, p in portfolios.items()}).T.rename_axis("Portfolio")
         return OptimizationResults(portfolios, frontier, summary, weights, self.covariance,
                                    pd.DataFrame(dominance).set_index("Asset"), pd.DataFrame(self.log),
-                                   self.estimate.label, self.estimate.shrinkage)
+                                   self.estimate.label, self.estimate.shrinkage,
+                                   self.expected.label, self.expected.shrinkage)
 
 
 def optimize_frontier(prices: pd.DataFrame, config: Config) -> OptimizationResults:

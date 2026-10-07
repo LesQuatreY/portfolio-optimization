@@ -7,6 +7,7 @@ import math
 
 from .assets import Asset, resolve_assets
 from .covariance import validate_covariance_method
+from .expected_returns import validate_expected_return_method
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,9 @@ class Config:
     include_leveraged_in_frontier: bool = True
     # Optimizer risk model: "ledoit_wolf" (shrinkage) or "sample" (historical sample covariance).
     covariance_method: str = "ledoit_wolf"
+    # Maximum Sharpe expected returns: "sample" (arithmetic mean; reference default) or "bayes_stein"
+    # (Jorion 1986 shrinkage; pre-specified OOS experiment documented in README).
+    expected_return_method: str = "sample"
     trading_days: int = 252
     calendar_days_per_year: float = 365.25
     risk_free_rate: float = 0.
@@ -58,6 +62,7 @@ class Config:
         if self.fx_provider not in {"fred", "yahoo"} or not self.fx_symbol.strip():
             raise ValueError("FX must come from a supported provider ('fred' or 'yahoo') with a series id.")
         validate_covariance_method(self.covariance_method)
+        validate_expected_return_method(self.expected_return_method)
         if self.base_currency != "EUR":
             raise ValueError("This study supports EUR as base currency.")
         if not isinstance(self.include_leveraged_in_frontier, bool):

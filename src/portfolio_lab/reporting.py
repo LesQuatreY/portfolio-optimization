@@ -54,6 +54,8 @@ def validate_study(prices, optimization, config) -> dict:
     final_attempts = optimization.solver_log.groupby("Portfolio", sort=False).tail(1)
     return {"covariance_estimator": optimization.covariance_estimator,
             "covariance_shrinkage": optimization.covariance_shrinkage,
+            "expected_return_estimator": optimization.expected_return_estimator,
+            "expected_return_shrinkage": optimization.expected_return_shrinkage,
             "portfolio_weight_sums": weight_sums, "minimum_portfolio_weight": minimum_weight,
             "maximum_weight_sum_error": max(abs(value - 1) for value in weight_sums.values()),
             "largest_volatility_ceiling_violation": largest_violation,
