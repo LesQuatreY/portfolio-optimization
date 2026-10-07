@@ -10,7 +10,7 @@ Returns are indexed by the end date of their interval. A window's returns are th
 ending inside it; the first one starts from the last observation before the window
 (the "return base"), which always precedes the window and is never a test date.
 """
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import numpy as np
 import pandas as pd
@@ -168,6 +168,79 @@ class WalkForwardResult:
     @property
     def fold_table(self) -> pd.DataFrame:
         return pd.DataFrame([vars(f) for f in self.folds]).set_index("test_year")
+
+    def annual_comparison(self, strategy: str = "Maximum Sharpe",
+                          benchmarks: Sequence[str] | None = None) -> "RelativePerformance":
+        """Calendar-year OOS comparison of one strategy with the benchmarks (default: all non-optimized series)."""
+        benchmarks = [c for c in self.oos_returns if c not in OPTIMIZED] if benchmarks is None else list(benchmarks)
+        complete = {f.test_year: f.complete_test_year for f in self.folds}
+        return relative_annual_performance(self.oos_returns[[strategy, *benchmarks]], strategy, benchmarks,
+                                           complete)
+
+
+def calendar_year_returns(returns: pd.DataFrame) -> pd.DataFrame:
+    """Compound returns ending in each calendar year: prod(1 + r) - 1."""
+    return (1 + returns).groupby(returns.index.year).prod().sub(1).rename_axis("Year")
+
+
+@dataclass
+class RelativePerformance:
+    """Year-by-year strategy vs benchmark results; excess = strategy - benchmark annual return."""
+    strategy: str
+    annual_returns: pd.DataFrame
+    excess: pd.DataFrame
+    complete: pd.Series
+    summary: pd.DataFrame
+
+    def year_labels(self) -> list[str]:
+        return [str(year) if done else f"{year} YTD" for year, done in self.complete.items()]
+
+    @property
+    def table(self) -> pd.DataFrame:
+        table = pd.concat([self.annual_returns, self.excess.add_prefix("vs ")], axis=1)
+        return table.set_axis(self.year_labels()).rename_axis("Year")
+
+    def formatted(self) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Display copies: returns/excess as signed percentages, counts as 'k / N'."""
+        table = self.table.map(lambda value: f"{value:+.1%}")
+        summary = self.summary.copy()
+        for column in ("Wins", "Losses", "Ties"):
+            summary[column] = [f"{k} / {n}" for k, n in zip(summary[column], summary["Years"])]
+        for column in ("Win rate", "Mean excess", "Median excess", "Mean excess ex best year",
+                       "Best excess", "Worst excess"):
+            summary[column] = summary[column].map(lambda value: f"{value:+.1%}" if "excess" in column
+                                                  else f"{value:.0%}")
+        return table, summary.drop(columns="Years")
+
+
+def relative_annual_performance(returns: pd.DataFrame, strategy: str, benchmarks: Sequence[str],
+                                complete: Mapping[int, bool] | None = None, *,
+                                tie_tolerance: float = 1e-12) -> RelativePerformance:
+    """Annual OOS returns and consistency statistics of `strategy` against each benchmark.
+
+    Every calendar year present is kept, including an incomplete final year (flagged via
+    `complete`). |excess| <= tie_tolerance is a tie, reported separately; win rate is
+    wins / all years. Best/worst years are the largest/smallest annual excess returns.
+    """
+    annual = calendar_year_returns(returns[[strategy, *benchmarks]])
+    excess = pd.DataFrame({name: annual[strategy] - annual[name] for name in benchmarks})
+    flags = pd.Series({year: True if complete is None else bool(complete.get(year, True))
+                       for year in annual.index}, name="Complete").rename_axis("Year")
+    labels = dict(zip(annual.index, [str(y) if flags[y] else f"{y} YTD" for y in annual.index]))
+    rows = {}
+    for name in benchmarks:
+        diff = excess[name]
+        ties = diff.abs() <= tie_tolerance
+        best, worst = diff.idxmax(), diff.idxmin()
+        rows[name] = {"Years": len(diff), "Wins": int((diff > tie_tolerance).sum()),
+                      "Losses": int((diff < -tie_tolerance).sum()), "Ties": int(ties.sum()),
+                      "Win rate": float((diff > tie_tolerance).mean()),
+                      "Mean excess": float(diff.mean()), "Median excess": float(diff.median()),
+                      "Mean excess ex best year": float(diff.drop(best).mean()) if len(diff) > 1 else np.nan,
+                      "Best year": labels[best], "Best excess": float(diff[best]),
+                      "Worst year": labels[worst], "Worst excess": float(diff[worst])}
+    summary = pd.DataFrame(rows).T.rename_axis(f"{strategy} vs")
+    return RelativePerformance(strategy, annual, excess, flags, summary)
 
 
 def walk_forward(prices: pd.DataFrame, config: Config, *, train_years: int = 10,

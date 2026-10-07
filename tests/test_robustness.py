@@ -8,7 +8,8 @@ from portfolio_lab.metrics import compute_asset_metrics
 from portfolio_lab.optimization import PortfolioOptimizer
 from portfolio_lab.returns import simple_returns
 from portfolio_lab.robustness import (
-    EQUAL_WEIGHT, OPTIMIZED, concentration, growth_metrics, hhi, subperiod_stability, turnover,
+    EQUAL_WEIGHT, OPTIMIZED, calendar_year_returns, concentration, growth_metrics, hhi,
+    relative_annual_performance, subperiod_stability, turnover,
     walk_forward, walk_forward_folds, weight_stability, window_prices)
 
 
@@ -187,3 +188,62 @@ def test_subperiods_respect_availability_and_rerun_the_engine(short_prices, cfg)
     assert set(result.stability.index.get_level_values("Portfolio")) == set(OPTIMIZED)
     assert set(result.stability.columns) == {"Mean weight", "Min weight", "Max weight", "Std weight",
                                              "Zero-weight share"}
+
+
+def yearly_returns():
+    # 2020: two daily returns; 2021: two; 2022 (incomplete): one.
+    index = pd.to_datetime(["2020-06-01", "2020-12-31", "2021-03-01", "2021-09-01", "2022-02-01"])
+    return pd.DataFrame({"S": [.10, -.05, .02, .03, -.01],
+                         "EW": [.05, .05, .02, .03, .01],
+                         "M": [.20, .00, .00, .00, -.02]}, index=index)
+
+
+def test_calendar_year_returns_compound_within_each_year():
+    annual = calendar_year_returns(yearly_returns())
+    assert list(annual.index) == [2020, 2021, 2022]
+    assert annual.loc[2020, "S"] == pytest.approx(1.10 * .95 - 1)
+    assert annual.loc[2021, "EW"] == pytest.approx(1.02 * 1.03 - 1)
+    assert annual.loc[2022, "M"] == pytest.approx(-.02)
+
+
+def test_relative_performance_statistics():
+    returns = yearly_returns()
+    result = relative_annual_performance(returns, "S", ["EW", "M"], {2020: True, 2021: True, 2022: False})
+    annual = calendar_year_returns(returns)
+    pd.testing.assert_series_equal(result.excess["EW"], annual["S"] - annual["EW"], check_names=False)
+    # S vs EW: 2020 .045 vs .1025 (loss), 2021 tie, 2022 -.01 vs .01 (loss).
+    ew = result.summary.loc["EW"]
+    assert (ew["Wins"], ew["Losses"], ew["Ties"], ew["Years"]) == (0, 2, 1, 3)
+    assert ew["Win rate"] == 0
+    # S vs M: 2020 .045 vs .20 (loss), 2021 .0506 vs 0 (win), 2022 -.01 vs -.02 (win).
+    m = result.summary.loc["M"]
+    assert (m["Wins"], m["Losses"], m["Ties"]) == (2, 1, 0)
+    assert m["Win rate"] == pytest.approx(2 / 3)
+    diff = result.excess["M"]
+    assert m["Mean excess"] == pytest.approx(diff.mean())
+    assert m["Median excess"] == pytest.approx(diff.median())
+    assert m["Mean excess ex best year"] == pytest.approx(diff.drop(2021).mean())
+    assert (m["Best year"], m["Best excess"]) == ("2021", pytest.approx(1.02 * 1.03 - 1))
+    assert (m["Worst year"], m["Worst excess"]) == ("2020", pytest.approx(1.10 * .95 - 1.20))
+
+
+def test_incomplete_final_year_is_kept_and_labelled():
+    result = relative_annual_performance(yearly_returns(), "S", ["EW"], {2022: False})
+    assert list(result.table.index) == ["2020", "2021", "2022 YTD"]
+    assert list(result.table.columns) == ["S", "EW", "vs EW"]
+    assert result.summary.loc["EW", "Years"] == 3
+    table, summary = result.formatted()
+    assert table.loc["2022 YTD", "vs EW"] == "-2.0%"
+    assert summary.loc["EW", "Ties"] == "1 / 3"
+
+
+def test_walk_forward_annual_comparison_reuses_oos_returns(short_prices, cfg):
+    result = run(short_prices, cfg)
+    comparison = result.annual_comparison()
+    assert list(comparison.annual_returns) == ["Maximum Sharpe", EQUAL_WEIGHT, "W"]
+    pd.testing.assert_frame_equal(comparison.annual_returns,
+                                  calendar_year_returns(result.oos_returns[["Maximum Sharpe", EQUAL_WEIGHT, "W"]]))
+    # Data end on 2015-06-30: the last test year is incomplete but still compared.
+    assert comparison.year_labels() == ["2012", "2013", "2014", "2015 YTD"]
+    # Compounding the annual returns reproduces the whole OOS growth.
+    np.testing.assert_allclose((1 + comparison.annual_returns).prod(), result.nav.iloc[-1][comparison.annual_returns.columns])
