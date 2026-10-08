@@ -5,8 +5,14 @@ import numpy as np
 import pandas as pd
 
 
-def plot_frontier(stats: pd.DataFrame, optimization, band: pd.DataFrame | None = None):
-    """Observed frontier; optionally a bootstrap uncertainty band (index = estimated-volatility grid)."""
+def format_limit(weight: float) -> str:
+    """Investor limit as a percentage without rounding it away (0.125 -> '12.5%', 0.1 -> '10%')."""
+    return f"{round(weight * 100, 2):g}%"
+
+
+def plot_frontier(stats: pd.DataFrame, optimization, band: pd.DataFrame | None = None, investor=None):
+    """Observed frontier; optionally a bootstrap uncertainty band (index = estimated-volatility grid)
+    and/or the investor-constrained frontier and portfolios from compare_investor_constraints."""
     fig, ax = plt.subplots(figsize=(13, 8), layout="constrained")
     if band is not None and len(band):
         ax.fill_between(band.index, band["Lower"], band["Upper"], color="tab:blue", alpha=.15, linewidth=0,
@@ -27,6 +33,22 @@ def plot_frontier(stats: pd.DataFrame, optimization, band: pd.DataFrame | None =
         grouped.setdefault(key, []).append(name)
     for (x, y), names in grouped.items():
         ax.scatter(x, y, s=90, marker="D", label=" / ".join(names))
+    if investor is not None:
+        limits = ", ".join(f"{asset} ≤ {format_limit(limit)}" for asset, limit in investor.limits.items())
+        constrained = investor.constrained.frontier.drop_duplicates(subset=["Volatility", "CAGR"])
+        ax.plot(constrained["Volatility"], constrained["CAGR"], color="tab:red", linestyle="--",
+                label=f"Investor-constrained frontier ({limits})")
+        names = investor.cost.index.get_level_values("Portfolio").unique()
+        shown = [(name, investor.constrained.portfolios[name]) for name in names
+                 if investor.constrained.portfolios[name]["weights"] is not None]
+        ax.scatter([p["Volatility"] for _, p in shown], [p["CAGR"] for _, p in shown], s=110, marker="D",
+                   facecolors="none", edgecolors="tab:red", linewidths=1.5,
+                   label=f"Investor-constrained portfolios ({limits})")
+        right = .8 * max([p["Volatility"] for _, p in shown] + list(stats["Volatility annualized"]))
+        for name, p in shown:
+            left = p["Volatility"] > right
+            ax.annotate(f"{name} ({limits})", (p["Volatility"], p["CAGR"]), xytext=(-6 if left else 6, -12),
+                        ha="right" if left else "left", textcoords="offset points", fontsize=8, color="tab:red")
     ax.set(xlabel="Annualized volatility (EUR)", ylabel="CAGR (EUR)", title="Historical risk and compounded return")
     ax.xaxis.set_major_formatter(PercentFormatter(1))
     ax.yaxis.set_major_formatter(PercentFormatter(1))
@@ -97,7 +119,7 @@ def plot_weight_profile(profile, investor_limit: float | None = None):
                label=f"Unconstrained optimum ({profile.optimum_weight:.1%})")
     limit = profile.investor_limit if investor_limit is None else investor_limit
     if limit is not None:
-        ax.axvline(limit, color="tab:red", linestyle="--", label=f"Investor limit ({limit:.0%})")
+        ax.axvline(limit, color="tab:red", linestyle="--", label=f"Investor limit ({format_limit(limit)})")
     ax.set(xlabel=f"{profile.asset} weight (others re-optimized)", ylabel="Sharpe (optimizer objective)",
            title=f"How sensitive is Maximum Sharpe to the {profile.asset} weight? (in-sample)")
     ax.xaxis.set_major_formatter(PercentFormatter(1))

@@ -133,3 +133,45 @@ def test_walk_forward_uses_limits_only_when_configured(cfg, prices):
     for name in ("Maximum Sharpe", "Minimum Volatility"):
         assert (capped.weights[name]["Gold"] <= .10).all()
         np.testing.assert_allclose(capped.weights[name].sum(axis=1), 1, atol=1e-12)
+
+
+def test_frontier_chart_shows_investor_constrained_portfolios(cfg, prices):
+    import matplotlib.pyplot as plt
+    from portfolio_lab.metrics import compute_asset_metrics
+    from portfolio_lab.plotting import plot_frontier
+    comparison = compare_investor_constraints(prices, cfg, {"Gold": .10})
+    stats = compute_asset_metrics(prices)
+    plain = plot_frontier(stats, comparison.unconstrained)
+    figure = plot_frontier(stats, comparison.unconstrained, investor=comparison)
+    labels = [line.get_label() for line in figure.axes[0].lines]
+    assert "Investor-constrained frontier (Gold ≤ 10%)" in labels
+    assert not any("Investor" in line.get_label() for line in plain.axes[0].lines)
+    marker = next(c for c in figure.axes[0].collections if c.get_label().startswith("Investor-constrained portfolios"))
+    expected = [[comparison.constrained.portfolios[n]["Volatility"], comparison.constrained.portfolios[n]["CAGR"]]
+                for n in ("Maximum Sharpe", "Minimum Volatility", "Maximum CAGR")]
+    np.testing.assert_allclose(marker.get_offsets(), expected)
+    assert any(t.get_text() == "Maximum Sharpe (Gold ≤ 10%)" for t in figure.axes[0].texts)
+    plt.close("all")
+
+
+@pytest.mark.parametrize("limits,label", [
+    ({"Gold": .10}, "Gold ≤ 10%"),
+    ({"Gold": .125}, "Gold ≤ 12.5%"),
+    ({"Gold": .25, "A": .3}, "Gold ≤ 25%, A ≤ 30%"),
+])
+def test_chart_labels_follow_the_configured_limits(cfg, prices, limits, label):
+    import matplotlib.pyplot as plt
+    from portfolio_lab.metrics import compute_asset_metrics
+    from portfolio_lab.optimization import sharpe_weight_profile
+    from portfolio_lab.plotting import plot_frontier, plot_weight_profile
+    comparison = compare_investor_constraints(prices, cfg, limits)
+    figure = plot_frontier(compute_asset_metrics(prices), comparison.unconstrained, investor=comparison)
+    texts = [line.get_label() for line in figure.axes[0].lines] + [t.get_text() for t in figure.axes[0].texts]
+    assert f"Investor-constrained frontier ({label})" in texts
+    assert f"Maximum Sharpe ({label})" in texts
+    assert not any("Gold ≤ 10%" in t for t in texts) or label.startswith("Gold ≤ 10%")
+    profile = sharpe_weight_profile(prices, with_max_weights(cfg, limits), "Gold", [0., .5, 1.])
+    gold = f"{round(limits['Gold'] * 100, 2):g}%"
+    lines = [line.get_label() for line in plot_weight_profile(profile).axes[0].lines]
+    assert f"Investor limit ({gold})" in lines
+    plt.close("all")

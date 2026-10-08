@@ -20,9 +20,13 @@ def test_notebook_defaults_match_package_and_can_be_overridden():
     path = Path(__file__).resolve().parents[1] / "notebooks/portfolio_analysis.ipynb"
     notebook = json.loads(path.read_text(encoding="utf-8"))
     cell = next(cell for cell in notebook["cells"] if cell.get("id") == "universe-config")
-    namespace = dict(configure_universe=configure_universe, load_config=load_config, project_dir=Path("."))
+    namespace = dict(configure_universe=configure_universe, load_config=load_config, project_dir=Path("."),
+                     replace=replace)
     exec("".join(cell["source"]), namespace)
-    assert namespace["config"] == load_config()
+    # The study end date is a notebook override; everything else must match the package defaults.
+    if namespace["study_end"]:
+        assert namespace["config"].end == namespace["study_end"]
+    assert replace(namespace["config"], end=load_config().end) == load_config()
     assert namespace["config"].leverage == ()
     del namespace["assets"]["Dow Jones"]
     overridden = configure_universe(load_config(), namespace["assets"], namespace["leveraged_assets"])
