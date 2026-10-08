@@ -109,9 +109,8 @@ class Config:
 def load_config(project_dir: Path = Path(".")) -> Config:
     """Defaults use verified TR benchmarks when accessible; no automatic fallback."""
     assets = {
-        "Apple": "AAPL", "Nasdaq 100": "QQQ", "S&P 500": "^SP500TR",
-        "Dow Jones": "DIA", "Gold": "GC=F", "MSCI World": "MSCI:990100:NETR",
-        "Europe": "IEV", "US Real Estate": "IYR",
+        "Apple": "AAPL", "Nasdaq 100": "QQQ", "MSCI World": "MSCI:990100:NETR",
+        "S&P 500": "^SP500TR", "Dow Jones": "DIA", "Gold": "GC=F", "Coca-Cola": "KO",
     }
     return Config(cache_dir=Path(project_dir) / ".cache/market",
                   output_dir=Path(project_dir) / "outputs", assets=resolve_assets(assets))
