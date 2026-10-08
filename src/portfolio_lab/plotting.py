@@ -5,8 +5,12 @@ import numpy as np
 import pandas as pd
 
 
-def plot_frontier(stats: pd.DataFrame, optimization):
+def plot_frontier(stats: pd.DataFrame, optimization, band: pd.DataFrame | None = None):
+    """Observed frontier; optionally a bootstrap uncertainty band (index = estimated-volatility grid)."""
     fig, ax = plt.subplots(figsize=(13, 8), layout="constrained")
+    if band is not None and len(band):
+        ax.fill_between(band.index, band["Lower"], band["Upper"], color="tab:blue", alpha=.15, linewidth=0,
+                        label=f"Bootstrap uncertainty band ({band['Level'].iloc[0]:.0%})")
     curve = optimization.frontier.drop_duplicates(subset=["Volatility", "CAGR"])
     ax.plot(curve["Volatility"], curve["CAGR"], color="black", label="Efficient frontier")
     for name, row in stats.iterrows():
