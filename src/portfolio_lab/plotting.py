@@ -81,6 +81,27 @@ def plot_effective_assets(effective: pd.DataFrame):
     return fig
 
 
+def plot_weight_profile(profile, investor_limit: float | None = None):
+    """Best achievable Maximum Sharpe objective for each fixed weight of one asset."""
+    fig, ax = plt.subplots(figsize=(10, 5), layout="constrained")
+    table = profile.table
+    ax.plot(table.index, table["Objective Sharpe"], color="black", label="Best achievable Sharpe")
+    for level, style in zip((.99, .95), (":", "--")):
+        ax.axhline(level * profile.optimum_objective, color="grey", linestyle=style, linewidth=1,
+                   label=f"{level:.0%} of optimal Sharpe")
+    ax.scatter([profile.optimum_weight], [profile.optimum_objective], s=80, marker="D", zorder=3,
+               label=f"Unconstrained optimum ({profile.optimum_weight:.1%})")
+    limit = profile.investor_limit if investor_limit is None else investor_limit
+    if limit is not None:
+        ax.axvline(limit, color="tab:red", linestyle="--", label=f"Investor limit ({limit:.0%})")
+    ax.set(xlabel=f"{profile.asset} weight (others re-optimized)", ylabel="Sharpe (optimizer objective)",
+           title=f"How sensitive is Maximum Sharpe to the {profile.asset} weight? (in-sample)")
+    ax.xaxis.set_major_formatter(PercentFormatter(1))
+    ax.grid(alpha=.2)
+    ax.legend(fontsize=8, loc="lower center")
+    return fig
+
+
 def allocation_summary(weights: pd.DataFrame, threshold: float = .01) -> pd.Series:
     return weights.apply(lambda row: " · ".join(f"{name} {weight:.1%}" for name, weight in
                         row.sort_values(ascending=False).items() if weight >= threshold), axis=1)

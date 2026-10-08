@@ -106,18 +106,22 @@ class PortfolioOptimizer:
         excess = self.mu @ w - self.config.risk_free_rate
         return -self.mu / vol + excess * (self.sigma @ w) / vol**3
 
-    def cap_and_normalize(self, x):
-        """Clip to [0, cap] and restore sum 1 without pushing any weight above its cap."""
-        w = np.clip(x, 0, self.upper)
+    def cap_and_normalize(self, x, lower=None, upper=None):
+        """Clip to [lower, upper] and restore sum 1 without leaving any bound (fixed weights stay exact)."""
+        lower = np.zeros(self.n) if lower is None else lower
+        upper = self.upper if upper is None else upper
+        w = np.clip(x, lower, upper)
         residual = 1 - w.sum()
         if residual > 0:
-            room = self.upper - w
+            room = upper - w
             w = w + residual * room / room.sum()
         elif residual < 0:
-            w = w + residual * w / w.sum()
-        return np.minimum(w, self.upper)
+            room = w - lower
+            w = w + residual * room / room.sum()
+        return np.clip(w, lower, upper)
 
-    def solve(self, objective, gradient, start, label: str, target: float | None = None):
+    def solve(self, objective, gradient, start, label: str, target: float | None = None,
+              bounds: list[tuple[float, float]] | None = None):
         constraints = [{"type": "eq", "fun": lambda w: w.sum() - 1,
                         "jac": lambda w: np.ones(self.n)}]
         if target is not None:
@@ -125,7 +129,10 @@ class PortfolioOptimizer:
             constraints.append({"type": "ineq", "fun": lambda w: (target**2 - self.variance(w)) / scale,
                                 "jac": lambda w: -2 * self.sigma @ w / scale})
         attempts = []
-        bounds = [(0., float(cap)) for cap in self.upper] if self.constrained else [(0., 1.)] * self.n
+        explicit = bounds is not None
+        if not explicit:
+            bounds = [(0., float(cap)) for cap in self.upper] if self.constrained else [(0., 1.)] * self.n
+        lower, upper = (np.array([b[0] for b in bounds]), np.array([b[1] for b in bounds]))
         for ftol in (1e-10, 1e-7):
             result = minimize(objective, start, jac=gradient, method="SLSQP",
                               bounds=bounds, constraints=constraints,
@@ -140,10 +147,12 @@ class PortfolioOptimizer:
         self.log.extend(attempts)
         if not result.success:
             raise RuntimeError(f"{label}: portfolio optimization failed: {result.message}")
-        if (not np.isfinite(result.x).all() or result.x.min() < -1e-8
-                or (result.x > self.upper + 1e-8).any() or abs(result.x.sum() - 1) > 1e-8):
+        if (not np.isfinite(result.x).all() or (result.x < lower - 1e-8).any()
+                or (result.x > upper + 1e-8).any() or abs(result.x.sum() - 1) > 1e-8):
             raise RuntimeError(f"{label}: optimizer returned infeasible weights.")
-        if self.constrained:
+        if explicit:
+            w = self.cap_and_normalize(result.x, lower, upper)
+        elif self.constrained:
             w = self.cap_and_normalize(result.x)
         else:
             w = np.clip(result.x, 0, 1)
@@ -196,6 +205,33 @@ class PortfolioOptimizer:
                                                 maximum["weights"].to_numpy(), *np.eye(self.n)])]
         sharpe = min(candidates, key=lambda p: self.sharpe_objective(p["weights"].to_numpy()))
         return {"Minimum Volatility": minimum, "Maximum CAGR": maximum, "Maximum Sharpe": sharpe}
+
+    def objective_sharpe(self, w) -> float:
+        """The Maximum Sharpe objective value (model expected return over estimated volatility)."""
+        return -self.sharpe_objective(np.asarray(w, dtype=float))
+
+    def fixed_weight_sharpe(self, asset: str, weight: float, starts) -> dict:
+        """Maximum Sharpe with `asset` held at exactly `weight`; all other weights re-optimized."""
+        i = list(self.prices.columns).index(asset)
+        if self.upper[i] < weight:
+            raise ValueError(f"Fixed weight {weight:.2%} for {asset} exceeds its investor limit.")
+        if weight == 1:
+            return self.metrics(np.eye(self.n)[i])
+        lower, upper = np.zeros(self.n), self.upper.copy()
+        lower[i] = upper[i] = weight
+        if upper.sum() < 1 - 1e-12:
+            raise ValueError(f"Fixed weight {weight:.2%} for {asset} is infeasible with the other limits.")
+        candidates = []
+        for start in starts:
+            # Project each start onto the fixed-weight slice: asset = weight, others scaled to 1 - weight.
+            rest = np.clip(np.asarray(start, dtype=float), 0, None)
+            rest[i] = 0
+            rest = rest if rest.sum() > 0 else np.where(np.arange(self.n) == i, 0., 1.)
+            point = rest / rest.sum() * (1 - weight)
+            point[i] = weight
+            candidates.append(self.solve(self.sharpe_objective, self.sharpe_gradient, point,
+                                         f"Fixed {asset} {weight:.4f}", bounds=list(zip(lower, upper))))
+        return min(candidates, key=lambda p: self.sharpe_objective(p["weights"].to_numpy()))
 
     def run(self) -> OptimizationResults:
         portfolios = self.core_portfolios()
@@ -311,3 +347,91 @@ def compare_investor_constraints(prices: pd.DataFrame, config: Config,
     weights["Difference"] = weights["Constrained"] - weights["Unconstrained"]
     weights["Investor limit"] = weights.index.get_level_values("Asset").map(limits)
     return InvestorConstraintComparison(limits, reference, constrained, cost, weights)
+
+
+PROFILE_THRESHOLDS = (.99, .98, .95)
+
+
+@dataclass
+class WeightProfile:
+    """Descriptive in-sample map of Maximum Sharpe as one asset's weight is held fixed.
+
+    Each row re-optimizes all other weights for the fixed weight. "Objective Sharpe" is the
+    quantity Maximum Sharpe maximizes (configured expected returns / estimated volatility);
+    loss and retained share are measured on it. "Sharpe" is the realized historical Sharpe.
+    Thresholds and ranges are diagnostics only; they are never used as constraints.
+    """
+    asset: str
+    optimum_weight: float
+    optimum_objective: float
+    table: pd.DataFrame
+    weights: pd.DataFrame
+    near_optimal: pd.DataFrame
+    investor_limit: float | None = None
+
+    def summary(self, step: float = .05) -> pd.DataFrame:
+        """Rows on a coarser grid plus the unconstrained optimum, for display."""
+        grid = self.table.index.to_numpy()
+        keep = np.isclose(np.round(grid / step) * step, grid, atol=1e-9) | np.isclose(grid, self.optimum_weight)
+        return self.table.loc[keep]
+
+    def formatted(self, step: float = .05) -> pd.DataFrame:
+        table = self.summary(step).copy()
+        out = pd.DataFrame(index=[f"{w:.1%}" + (" (optimum)" if np.isclose(w, self.optimum_weight) else "")
+                                  for w in table.index])
+        out.index.name = f"{self.asset} weight"
+        out["CAGR"] = [f"{v:.2%}" for v in table["CAGR"]]
+        out["Volatility"] = [f"{v:.2%}" for v in table["Volatility"]]
+        out["Sharpe"] = [f"{v:.3f}" for v in table["Sharpe"]]
+        out["Objective Sharpe"] = [f"{v:.3f}" for v in table["Objective Sharpe"]]
+        out["Loss vs optimum"] = [f"{v:+.3f}" for v in table["Loss vs optimum"]]
+        out["Sharpe retained"] = [f"{v:.1%}" for v in table["Sharpe retained"]]
+        return out
+
+
+def sharpe_weight_profile(prices: pd.DataFrame, config: Config, asset: str,
+                          weights=None, thresholds=PROFILE_THRESHOLDS) -> WeightProfile:
+    """How much Maximum Sharpe changes when `asset` is fixed at each weight (others re-optimized).
+
+    Maps the unconstrained in-sample objective surface: configured investor limits are not
+    applied (the asset's limit, if any, is only recorded for display). The default grid is
+    0%..100% in 1% steps plus the exact unconstrained optimum, which must be recovered.
+    """
+    reference = replace(config, max_weights=())
+    prices = prices[select_frontier_assets(reference)]
+    if asset not in prices.columns:
+        raise ValueError(f"'{asset}' is not an optimizer asset; choose from {list(prices.columns)}.")
+    grid = np.round(np.linspace(0, 1, 101), 10) if weights is None else np.asarray(weights, dtype=float)
+    if grid.ndim != 1 or not len(grid) or not np.isfinite(grid).all() or (grid < 0).any() or (grid > 1).any():
+        raise ValueError("Fixed weights must be a nonempty list of finite values in [0, 1].")
+    optimizer = PortfolioOptimizer(prices, reference)
+    core = optimizer.core_portfolios()
+    best = core["Maximum Sharpe"]["weights"]
+    optimum_weight = float(best[asset])
+    optimum = optimizer.objective_sharpe(best.to_numpy())
+    grid = np.unique(np.r_[grid, optimum_weight])
+    rows, allocations, previous = [], {}, None
+    for weight in grid:
+        starts = [optimizer.equal, best.to_numpy(), core["Minimum Volatility"]["weights"].to_numpy()]
+        starts += [] if previous is None else [previous]
+        result = optimizer.fixed_weight_sharpe(asset, float(weight), starts)
+        previous = result["weights"].to_numpy()
+        objective = optimizer.objective_sharpe(previous)
+        rows.append({"Weight": float(weight), "CAGR": result["CAGR"], "Volatility": result["Volatility"],
+                     "Sharpe": result["Sharpe"], "Objective Sharpe": objective,
+                     "Loss vs optimum": objective - optimum,
+                     "Sharpe retained": objective / optimum if optimum > 0 else np.nan})
+        allocations[float(weight)] = result["weights"]
+    table = pd.DataFrame(rows).set_index("Weight")
+    near = []
+    for level in thresholds:
+        inside = table.index[table["Sharpe retained"] >= level]
+        positions = np.flatnonzero(table["Sharpe retained"].to_numpy() >= level)
+        near.append({"Threshold": f">= {level:.0%} of optimal Sharpe",
+                     "Min weight": inside.min() if len(inside) else np.nan,
+                     "Max weight": inside.max() if len(inside) else np.nan,
+                     "Contiguous": bool(len(positions) and (np.diff(positions) == 1).all())})
+    limit = dict(config.max_weights).get(asset)
+    return WeightProfile(asset, optimum_weight, optimum, table,
+                         pd.DataFrame(allocations).T.rename_axis(f"{asset} weight"),
+                         pd.DataFrame(near).set_index("Threshold"), limit)
