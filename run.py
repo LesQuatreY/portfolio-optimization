@@ -1,4 +1,4 @@
-"""Run the notebook in a fresh kernel with every writable runtime path in this repo."""
+"""Run the research notebooks in fresh kernels (outputs safety-checked) or the test suite."""
 from pathlib import Path
 import argparse
 import json
@@ -22,7 +22,8 @@ def configure_runtime(root: Path) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--test", action="store_true", help="Run pytest rather than the notebook.")
+    parser.add_argument("--test", action="store_true", help="Run pytest rather than the notebooks.")
+    parser.add_argument("notebooks", nargs="*", help="Notebook names (default: both research notebooks).")
     args = parser.parse_args()
     root = Path(__file__).resolve().parent
     os.chdir(root)
@@ -40,12 +41,23 @@ def main():
     spec = {"argv": [sys.executable, "-m", "ipykernel_launcher", "-f", "{connection_file}"],
             "display_name": "Portfolio Lab", "language": "python"}
     (kernel_path / "kernel.json").write_text(json.dumps(spec), encoding="utf-8")
-    notebook = nbformat.read(root / "notebooks/portfolio_analysis.ipynb", as_version=4)
-    client = NotebookClient(notebook, timeout=1800, kernel_name="portfolio-lab", resources={"metadata": {"path": str(root)}})
-    client.execute()
-    target = root / "outputs/portfolio_analysis.executed.ipynb"
-    nbformat.write(notebook, target)
-    print(f"Notebook completed in a fresh kernel: {target}")
+    from portfolio_lab.protocol import assert_notebook_outputs_safe, find_holdout_dates
+    names = args.notebooks or ["portfolio_analysis", "portfolio_robustness"]
+    for name in names:
+        notebook = nbformat.read(root / f"notebooks/{name}.ipynb", as_version=4)
+        client = NotebookClient(notebook, timeout=1800, kernel_name="portfolio-lab",
+                                resources={"metadata": {"path": str(root / "notebooks")}})
+        client.execute()
+        # Never persist an executed notebook whose outputs mention locked holdout dates.
+        outputs = nbformat.writes(notebook)
+        dates = find_holdout_dates(json.dumps([c.get("outputs", []) for c in notebook.cells], ensure_ascii=False))
+        if dates:
+            raise SystemExit(f"{name}: outputs contain holdout dates {dates[:5]}; nothing was written.")
+        target = root / f"outputs/{name}.executed.ipynb"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(outputs, encoding="utf-8")
+        assert_notebook_outputs_safe(target)
+        print(f"Notebook completed in a fresh kernel: {target}")
 
 
 if __name__ == "__main__":

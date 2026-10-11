@@ -6,7 +6,7 @@ from portfolio_lab.metrics import compute_asset_metrics
 
 def test_independent_metric_values():
     # Exactly one calendar year, with returns +10%, -20%, +25% => terminal 110.
-    dates = pd.to_datetime(["2021-01-01", "2021-04-01", "2021-08-01", "2022-01-01"])
+    dates = pd.to_datetime(["2014-01-01", "2014-04-01", "2014-08-01", "2015-01-01"])
     stats = compute_asset_metrics(pd.DataFrame({"A": [100, 110, 88, 110]}, index=dates), 252, .02, 365).loc["A"]
     arithmetic = .05 * 252
     sample_variance = ((.1 - .05)**2 + (-.2 - .05)**2 + (.25 - .05)**2) / 2

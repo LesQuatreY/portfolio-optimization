@@ -21,7 +21,7 @@ def csv_text(rows):
 def test_normalization_parses_sorts_deduplicates_and_drops_holidays():
     frame = fred_frame(["1999-01-05", "1999-01-04", "1999-01-05", "1999-01-06", "1999-01-07"],
                        ["1.1760", "1.1812", "1.1760", "", "1.1636"])
-    result = normalize_fred_series(frame, FX, "2026-10-07")
+    result = normalize_fred_series(frame, FX, "2019-10-07")
     assert result.name == "EURUSD" and result.dtype == float
     assert isinstance(result.index, pd.DatetimeIndex) and result.index.tz is None
     assert list(result.index) == list(pd.to_datetime(["1999-01-04", "1999-01-05", "1999-01-07"]))
@@ -31,15 +31,15 @@ def test_normalization_parses_sorts_deduplicates_and_drops_holidays():
 
 
 def test_normalization_respects_exclusive_end():
-    frame = fred_frame(["2026-10-01", "2026-10-02", "2026-10-07"], ["1.12", "1.13", "1.14"])
-    assert normalize_fred_series(frame, FX, "2026-10-07").index[-1] == pd.Timestamp("2026-10-02")
+    frame = fred_frame(["2019-10-01", "2019-10-02", "2019-10-07"], ["1.12", "1.13", "1.14"])
+    assert normalize_fred_series(frame, FX, "2019-10-07").index[-1] == pd.Timestamp("2019-10-02")
 
 
 @pytest.mark.parametrize("frame", [None, fred_frame([], []), fred_frame(["1999-01-04"], [""]),
-                                   fred_frame(["2026-10-08"], ["1.1"])])
+                                   fred_frame(["2019-10-08"], ["1.1"])])
 def test_no_data_fails_loudly(frame):
     with pytest.raises(RuntimeError, match="No FRED history.*no substitute"):
-        normalize_fred_series(frame, FX, "2026-10-07")
+        normalize_fred_series(frame, FX, "2019-10-07")
 
 
 @pytest.mark.parametrize("frame,match", [
@@ -51,7 +51,7 @@ def test_no_data_fails_loudly(frame):
 ])
 def test_malformed_data_rejected(frame, match):
     with pytest.raises(ValueError, match=match):
-        normalize_fred_series(frame, FX, "2026-10-07")
+        normalize_fred_series(frame, FX, "2019-10-07")
 
 
 def test_provider_requests_inclusive_end_and_cached_reload_is_identical(tmp_path):
@@ -64,19 +64,19 @@ def test_provider_requests_inclusive_end_and_cached_reload_is_identical(tmp_path
         calls.append((series_id, last))
         return csv_text(rows)
 
-    fresh = FREDProvider(tmp_path, fetch_csv=fetch_csv).history(FX, "2026-10-07")
-    assert calls == [("DEXUSEU", "2026-10-06")]
-    cached = FREDProvider(tmp_path, fetch_csv=fetch_csv).history(FX, "2026-10-07")
+    fresh = FREDProvider(tmp_path, fetch_csv=fetch_csv).history(FX, "2019-10-07")
+    assert calls == [("DEXUSEU", "2019-10-06")]
+    cached = FREDProvider(tmp_path, fetch_csv=fetch_csv).history(FX, "2019-10-07")
     assert len(calls) == 1
     assert fresh.equals(cached)
-    refreshed = FREDProvider(tmp_path, refresh=True, fetch_csv=fetch_csv).history(FX, "2026-10-07")
+    refreshed = FREDProvider(tmp_path, refresh=True, fetch_csv=fetch_csv).history(FX, "2019-10-07")
     assert refreshed.equals(cached) and len(calls) == 2
 
 
 def test_invalid_series_id_rejected_before_any_request(tmp_path):
     provider = FREDProvider(tmp_path, fetch_csv=lambda *args: pytest.fail("no request expected"))
     with pytest.raises(ValueError, match="invalid FRED series id"):
-        provider.history(replace(FX, symbol="DEXUSEU&x=1"), "2026-10-07")
+        provider.history(replace(FX, symbol="DEXUSEU&x=1"), "2019-10-07")
 
 
 def make_providers(tmp_path, asset_dates, asset_values, fx_rows, calls):
@@ -96,7 +96,7 @@ def make_providers(tmp_path, asset_dates, asset_values, fx_rows, calls):
 
 def test_usd_to_eur_math_routing_and_provenance(config, tmp_path):
     calls = []
-    dates = ["2020-01-02", "2020-01-03", "2020-01-06"]
+    dates = ["2012-01-02", "2012-01-03", "2012-01-06"]
     providers = make_providers(tmp_path, dates, [110., 220., 121.],
                                [(dates[0], "1.10"), (dates[1], "1.10"), (dates[2], "1.21")], calls)
     cfg = configure_universe(config, {"Apple": "AAPL"}, {},
@@ -110,7 +110,7 @@ def test_usd_to_eur_math_routing_and_provenance(config, tmp_path):
     row = data.provenance.loc["Apple"]
     assert row["Provider"] == "Yahoo Finance"
     assert (row["FX provider"], row["FX series used"], row["FX convention"]) == ("FRED", "DEXUSEU", "USD per EUR")
-    assert row["FX start date"] == pd.Timestamp("2020-01-02")
+    assert row["FX start date"] == pd.Timestamp("2012-01-02")
 
 
 def test_fred_history_from_1999_keeps_2000_usd_asset_from_its_start(config, tmp_path):

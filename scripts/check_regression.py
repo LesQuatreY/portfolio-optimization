@@ -1,18 +1,34 @@
-"""Compare archived and refactored engines with exactly the same EUR inputs."""
+"""Compare archived and refactored engines with exactly the same EUR inputs AND assumptions.
+
+The archived notebook engine uses the sample covariance, sample-mean expected returns and no
+investor bounds over every configured asset. The refactored engine is therefore re-run here
+with exactly those settings on the same exported prices, instead of reading the notebook's
+results (which use the research configuration: Ledoit-Wolf, investor caps, eligibility).
+Estimator-dependent differences are a methodology change, not a regression, and are reported
+separately by the analysis notebook. Tolerances are unchanged.
+"""
+from dataclasses import replace
 from pathlib import Path
 import json
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
-from portfolio_lab.config import Asset, Config
+from portfolio_lab.config import Asset, Config, WalkForwardSettings
 from portfolio_lab.metrics import compute_asset_metrics
 from portfolio_lab.leverage import leveraged_name
+from portfolio_lab.optimization import optimize_frontier
 
 root = Path(__file__).resolve().parents[1]
 settings = json.loads((root / "outputs/effective-config.json").read_text(encoding="utf-8"))
 config = Config(**{**settings, "assets": tuple(Asset(**asset) for asset in settings["assets"]),
                    "leverage": tuple(tuple(entry) for entry in settings["leverage"]),
                    "targets": tuple(tuple(entry) for entry in settings["targets"]),
+                   "max_weights": tuple(tuple(entry) for entry in settings.get("max_weights", ())),
+                   "min_weights": tuple(tuple(entry) for entry in settings.get("min_weights", ())),
+                   "eligible": tuple(settings.get("eligible", ())),
+                   "financing_series": tuple(tuple(entry) for entry in settings.get("financing_series", ())),
+                   "holding_costs": tuple(tuple(entry) for entry in settings.get("holding_costs", ())),
+                   "walk_forward": WalkForwardSettings(**settings.get("walk_forward", {})),
                    "cache_dir": Path(settings["cache_dir"]), "output_dir": Path(settings["output_dir"])})
 notebook = json.loads((root / "notebooks/archive/draft.ipynb").read_text(encoding="utf-8"))
 prices = pd.read_csv(root / "outputs/eur-prices.csv", index_col=0, parse_dates=True)
@@ -31,8 +47,10 @@ namespace = dict(
 )
 for cell_number in (12, 14):
     exec(compile("".join(notebook["cells"][cell_number]["source"]), f"original-cell-{cell_number}", "exec"), namespace)
-new = pd.read_csv(root / "outputs/portfolio-results.csv", index_col=0)
-new_weights = pd.read_csv(root / "outputs/portfolio-weights.csv", index_col=0)
+equivalent = replace(config, covariance_method="sample", expected_return_method="sample",
+                     max_weights=(), min_weights=(), eligible=())
+refactored = optimize_frontier(prices, equivalent)
+new, new_weights = refactored.summary, refactored.weights
 original = {"Minimum Volatility": namespace["minimum_volatility_portfolio"],
             "Maximum CAGR": namespace["maximum_growth_portfolio"],
             "Maximum Sharpe": namespace["maximum_sharpe_portfolio"], **namespace["target_portfolios"]}

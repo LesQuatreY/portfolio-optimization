@@ -9,7 +9,7 @@ class ToyProvider:
     name = "deterministic fixture"
 
     def history(self, asset, end):
-        dates = pd.date_range("2020-01-01", periods=5)
+        dates = pd.date_range("2012-01-01", periods=5)
         values = {"A": [100, 110, 120, 130, 140], "B": [50, np.nan, 55, 60, 65],
                   "EURUSD": [2, 2, 1, 1, 2]}
         return pd.Series(values[asset.name], index=dates, name=asset.name, dtype=float)
@@ -23,8 +23,8 @@ def test_schema_alignment_metadata_and_names(config):
     assert data.provenance.loc["B", "Raw missing observations"] == 1
     assert data.provenance.loc["A", "Raw observations"] == 5
     assert data.provenance.loc["A", "Final common observations"] == 4
-    assert data.provenance.loc["A", "Raw start date"] == pd.Timestamp("2020-01-01")
-    assert data.provenance.loc["B", "Raw end date"] == pd.Timestamp("2020-01-05")
+    assert data.provenance.loc["A", "Raw start date"] == pd.Timestamp("2012-01-01")
+    assert data.provenance.loc["B", "Raw end date"] == pd.Timestamp("2012-01-05")
     assert data.common.index.is_unique and data.common.index.is_monotonic_increasing
 
 
@@ -51,15 +51,15 @@ def test_no_joint_observations_rejected(dates):
 
 
 def test_csv_provider_roundtrip(tmp_path, config):
-    dates = pd.date_range("2020-01-01", periods=3)
+    dates = pd.date_range("2012-01-01", periods=3)
     pd.DataFrame({"Date": dates, "Value": [100, 110, 120]}).to_csv(tmp_path / "A.csv", index=False)
-    result = CSVProvider(tmp_path).history(config.assets[0], "2020-01-03")
+    result = CSVProvider(tmp_path).history(config.assets[0], "2012-01-03")
     assert result.name == "A" and len(result) == 2
 
 
 def test_provider_end_contract_enforced(config):
     with pytest.raises(ValueError, match="exclusive"):
-        load_market_data(replace(config, end="2020-01-03"), ToyProvider())
+        load_market_data(replace(config, end="2012-01-03"), ToyProvider())
 
 
 @pytest.mark.parametrize("kwargs", [{"base_currency": "USD"}, {"frontier_points": 1}, {"trading_days": 0},

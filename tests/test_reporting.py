@@ -24,7 +24,7 @@ def test_coverage_reports_observed_dates(config):
     from portfolio_lab.data import study_coverage
     data = load_market_data(config, ToyProvider())
     coverage = study_coverage(data, config)
-    assert coverage["common_start"] == "2020-01-01"
+    assert coverage["common_start"] == "2012-01-01"
     assert coverage["common_observations"] == 4
     assert coverage["raw_start_limiting_assets"] == ["A", "B"]
     assert not coverage["first_common_date_delayed_by_calendar"]

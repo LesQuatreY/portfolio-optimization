@@ -1,3 +1,9 @@
+import matplotlib
+
+# Headless, deterministic rendering: the interactive default (TkAgg) depends on the local Tcl/Tk
+# installation, which is broken intermittently on this Windows Store Python and made chart tests flaky.
+matplotlib.use("Agg", force=True)
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -6,7 +12,7 @@ from portfolio_lab.config import Asset, Config
 
 @pytest.fixture
 def dates():
-    return pd.date_range("2020-01-01", periods=3)
+    return pd.date_range("2012-01-01", periods=3)
 
 
 @pytest.fixture
@@ -23,4 +29,4 @@ def portfolio_prices():
     second = .01 * np.array([1, -1, 1, -1] * 16)
     returns = np.column_stack([.001 + first, .0006 + second])
     return pd.DataFrame(np.vstack([np.ones(2), np.cumprod(1 + returns, axis=0)]),
-                        columns=["A", "B"], index=pd.date_range("2020-01-01", periods=65))
+                        columns=["A", "B"], index=pd.date_range("2012-01-01", periods=65))

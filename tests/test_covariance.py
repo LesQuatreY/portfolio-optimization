@@ -16,7 +16,7 @@ def returns():
     rng = np.random.default_rng(3)
     factor = rng.standard_normal((500, 1))
     data = .01 * factor * np.array([1., .8, .3, 0.]) + .01 * rng.standard_normal((500, 4)) * [1., 1.5, .5, 2.]
-    return pd.DataFrame(data, index=pd.bdate_range("2020-01-01", periods=500), columns=["Z", "A", "M", "B"])
+    return pd.DataFrame(data, index=pd.bdate_range("2012-01-01", periods=500), columns=["Z", "A", "M", "B"])
 
 
 def test_ledoit_wolf_is_labelled_symmetric_finite_and_positive_definite(returns):

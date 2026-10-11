@@ -14,7 +14,7 @@ from portfolio_lab.robustness import OPTIMIZED, walk_forward
 def returns():
     rng = np.random.default_rng(5)
     data = rng.normal([.0008, .0003, .0001, .0005], [.02, .012, .008, .015], (750, 4))
-    return pd.DataFrame(data, index=pd.bdate_range("2020-01-01", periods=750), columns=["Z", "A", "M", "B"])
+    return pd.DataFrame(data, index=pd.bdate_range("2012-01-01", periods=750), columns=["Z", "A", "M", "B"])
 
 
 def jorion_reference(x: np.ndarray) -> tuple[np.ndarray, float, float]:

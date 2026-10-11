@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 from .returns import simple_returns
 from .plotting import allocation_summary
+from .protocol import assert_dates_before_holdout, assert_file_safe
 
 
 def format_weights(weights: pd.DataFrame) -> pd.DataFrame:
@@ -71,9 +72,36 @@ def validate_study(prices, optimization, config) -> dict:
             "unsuccessful_solver_attempts": int((~optimization.solver_log["Success"]).sum())}
 
 
+def assert_outputs_safe(paths) -> None:
+    """Every exported file must be free of locked holdout dates (checked after writing)."""
+    for path in paths:
+        assert_file_safe(path)
+
+
+def export_walk_forward(result, directory: Path, prefix: str = "walk-forward") -> list[Path]:
+    """CSV evidence of a walk-forward run (validation years only), safety-checked after writing."""
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    assert_dates_before_holdout(result.oos_returns.index, "Walk-forward export")
+    tables = {"folds": result.fold_table, "summary": result.summary(), "oos-returns": result.oos_returns,
+              "gross-returns": result.gross_returns, "annual-returns": result.annual_returns(),
+              "trading": result.trading, "costs": result.costs, "train-metrics": result.train_metrics,
+              "weights": pd.concat(result.weights, names=["Strategy"])}
+    written = []
+    for name, table in tables.items():
+        if table is None:
+            continue
+        path = directory / f"{prefix}-{name}.csv"
+        table.to_csv(path, float_format="%.17g")
+        written.append(path)
+    assert_outputs_safe(written)
+    return written
+
+
 def write_review_outputs(data, prices, stats, diagnostics, optimization, config, directory: Path | None = None):
     directory = Path(config.output_dir if directory is None else directory)
     directory.mkdir(parents=True, exist_ok=True)
+    assert_dates_before_holdout(prices.index, "Review export")
     (directory / "effective-config.json").write_text(
         json.dumps(asdict(config), indent=2, ensure_ascii=False, default=str), encoding="utf-8")
     sanity = validate_study(prices, optimization, config)
@@ -126,4 +154,8 @@ def write_review_outputs(data, prices, stats, diagnostics, optimization, config,
     sections.extend(["## Numerical sanity checks", "```json\n" + json.dumps(sanity, indent=2) + "\n```"])
     sections.extend(["## Historical coverage", "```json\n" + json.dumps(coverage, indent=2) + "\n```"])
     (directory / "review.md").write_text("\n\n".join(sections), encoding="utf-8")
+    assert_outputs_safe([directory / f"{name}.csv" for name in tables] +
+                        [directory / name for name in ("eur-prices.csv", "eur-returns.csv", "review.md",
+                                                       "sanity-checks.json", "study-coverage.json",
+                                                       "effective-config.json")])
     return sanity

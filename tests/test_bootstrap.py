@@ -14,7 +14,7 @@ from portfolio_lab.returns import simple_returns
 
 @pytest.fixture(scope="module")
 def prices():
-    dates = pd.bdate_range("2019-12-31", periods=400)
+    dates = pd.bdate_range("2010-12-31", periods=400)
     rng = np.random.default_rng(13)
     returns = rng.normal([.0009, .0004, .0002], [.012, .015, .008], (len(dates), 3))
     return pd.DataFrame(100 * np.cumprod(1 + returns, axis=0), index=dates, columns=["Gold", "A", "B"])

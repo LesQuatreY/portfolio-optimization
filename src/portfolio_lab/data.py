@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 from .config import Asset, Config
 from .currency import to_eur
+from .protocol import assert_dates_before_holdout, assert_end_allowed
 from .returns import validate_prices
 
 
@@ -27,6 +28,7 @@ def validate_history(series: pd.Series, name: str) -> None:
             or not series.index.is_monotonic_increasing or series.empty
             or series.index.hasnans or not series.index.equals(series.index.normalize())):
         raise ValueError(f"{name}: expected named series with unique sorted, timezone-free session dates.")
+    assert_dates_before_holdout(series.index, f"{name} history")
     observed = series.dropna()
     if observed.empty or not np.isfinite(observed.to_numpy()).all() or (observed <= 0).any():
         raise ValueError(f"{name}: missing history or invalid observed values.")
@@ -68,6 +70,7 @@ class YahooProvider:
         yf.set_tz_cache_location(str(self.cache_dir / "yfinance"))
 
     def history(self, asset: Asset, end: str) -> pd.Series:
+        assert_end_allowed(end, f"{asset.name} data request end")
         import yfinance as yf
         params = {"symbol": asset.symbol, "end_exclusive": end, "interval": "1d",
                   "auto_adjust": asset.return_type == "Adjusted price", "repair": False}
@@ -119,6 +122,7 @@ def normalize_msci_levels(frame: pd.DataFrame | None, asset: Asset, end: str) ->
     NETR/GRTR levels already embed reinvested dividends: pct_change() is the total return,
     so no adjustment, dividend addition or FX conversion is applied here.
     """
+    assert_end_allowed(end, f"{asset.name} data request end")
     code, variant = parse_msci_symbol(asset)
     label = f"{asset.name} (MSCI {code} {variant})"
     if frame is None or frame.empty:
@@ -169,6 +173,7 @@ class MSCIProvider:
                 f"native {asset.currency} index levels, not an ETF adjusted price")
 
     def history(self, asset: Asset, end: str) -> pd.Series:
+        assert_end_allowed(end, f"{asset.name} data request end")
         code, variant = parse_msci_symbol(asset)
         # msci-data's to_date is inclusive; the study end is exclusive.
         last = (pd.Timestamp(end) - pd.Timedelta(days=1)).date().isoformat()
@@ -198,6 +203,7 @@ class CSVProvider:
         self.directory = Path(directory)
 
     def history(self, asset: Asset, end: str) -> pd.Series:
+        assert_end_allowed(end, f"{asset.name} data request end")
         series = pd.read_csv(self.directory / f"{asset.symbol}.csv", index_col="Date", parse_dates=True)["Value"]
         series = series.loc[series.index < pd.Timestamp(end)].rename(asset.name)
         validate_history(series, asset.name)
@@ -208,13 +214,27 @@ FRED_SERIES = re.compile(r"[A-Z0-9]+")
 FRED_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
 
 
-def normalize_fred_series(frame: pd.DataFrame | None, asset: Asset, end: str) -> pd.Series:
+def validate_rate_history(series: pd.Series, name: str) -> None:
+    """Interest rates: same calendar rules as prices, finite, but zero or negative values allowed."""
+    if (series.name != name or not isinstance(series.index, pd.DatetimeIndex)
+            or series.index.tz is not None or not series.index.is_unique
+            or not series.index.is_monotonic_increasing or series.empty
+            or not series.index.equals(series.index.normalize())):
+        raise ValueError(f"{name}: expected named rate series with unique sorted, timezone-free dates.")
+    assert_dates_before_holdout(series.index, f"{name} rate history")
+    if not np.isfinite(series.to_numpy(dtype=float)).all() or (series.abs() > 100).any():
+        raise ValueError(f"{name}: rates must be finite percentages.")
+
+
+def normalize_fred_series(frame: pd.DataFrame | None, asset: Asset, end: str, *,
+                          rate: bool = False) -> pd.Series:
     """fredgraph observation_date/<series id> rows -> observed values before the exclusive end.
 
     Values are kept exactly as published (DEXUSEU stays USD per EUR; never inverted).
     Blank cells are FRED's non-publication days (holidays) and are dropped, like any
     unobserved session; any other non-numeric value is rejected.
     """
+    assert_end_allowed(end, f"{asset.name} data request end")
     label = f"{asset.name} (FRED {asset.symbol})"
     if frame is None or frame.empty:
         raise RuntimeError(f"No FRED history for {label}; no substitute was selected.")
@@ -238,7 +258,7 @@ def normalize_fred_series(frame: pd.DataFrame | None, asset: Asset, end: str) ->
     series = series.loc[series.index < pd.Timestamp(end)]
     if series.empty:
         raise RuntimeError(f"No FRED history for {label} before {end}; no substitute was selected.")
-    validate_history(series, asset.name)
+    (validate_rate_history if rate else validate_history)(series, asset.name)
     return series
 
 
@@ -261,6 +281,7 @@ class FREDProvider:
             return response.read().decode("utf-8")
 
     def history(self, asset: Asset, end: str) -> pd.Series:
+        assert_end_allowed(end, f"{asset.name} data request end")
         if FRED_SERIES.fullmatch(asset.symbol) is None:
             raise ValueError(f"{asset.name}: invalid FRED series id '{asset.symbol}'.")
         # FRED's coed is inclusive; the study end is exclusive.
@@ -277,6 +298,28 @@ class FREDProvider:
         validate_history(result, asset.name)
         if (result.index >= pd.Timestamp(end)).any():
             raise ValueError(f"{asset.name}: provider returned dates at or beyond the exclusive end.")
+        return result
+
+    def rate_history(self, series_id: str, end: str) -> pd.Series:
+        """Published interest-rate observations (percent per year) strictly before the exclusive end."""
+        assert_end_allowed(end, f"{series_id} rate request end")
+        if FRED_SERIES.fullmatch(series_id) is None:
+            raise ValueError(f"Invalid FRED series id '{series_id}'.")
+        last = (pd.Timestamp(end) - pd.Timedelta(days=1)).date().isoformat()
+        params = {"series_id": series_id, "url": FRED_CSV_URL, "to_date": last, "kind": "rate"}
+        path, manifest = _snapshot_paths(self.cache_dir, params)
+        series_asset = Asset(series_id, series_id, "interest rate (percent per year)", "USD", "Price Return", "None",
+                             provider="fred")
+        if path.exists() and manifest.exists() and not self.refresh:
+            result = _read_snapshot(path, manifest, params, series_asset)
+        else:
+            from io import StringIO
+            frame = pd.read_csv(StringIO(self._fetch_csv(series_id, last)), dtype=str, keep_default_na=False)
+            result = normalize_fred_series(frame, series_asset, end, rate=True)
+            _write_snapshot(path, manifest, result, frame, self.name, params, None)
+        validate_rate_history(result, series_id)
+        if (result.index >= pd.Timestamp(end)).any():
+            raise ValueError(f"{series_id}: provider returned dates at or beyond the exclusive end.")
         return result
 
 
@@ -328,6 +371,11 @@ def provider_router(config: Config, provider: Provider | Mapping[str, Provider] 
 
 
 def load_market_data(config: Config, provider: Provider | Mapping[str, Provider] | None = None) -> MarketData:
+    """Every configured asset (eligible or not, e.g. a benchmark) before the exclusive end.
+
+    The end can never pass the locked holdout start; providers and validation re-check it.
+    """
+    assert_end_allowed(config.end, "Study end")
     route = provider_router(config, provider)
     native = {a.name: route(a).history(a, config.end) for a in config.assets}
     for name, series in native.items():

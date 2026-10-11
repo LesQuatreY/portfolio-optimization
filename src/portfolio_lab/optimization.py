@@ -3,7 +3,7 @@ from dataclasses import dataclass, replace
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
-from .config import Config, with_max_weights
+from .config import Config, eligible_names, with_max_weights
 from .metrics import compute_asset_metrics
 from .leverage import leveraged_name
 from .returns import simple_returns
@@ -31,8 +31,21 @@ DOMINANCE_COLUMNS = ["Asset", "100% CAGR", "100% volatility", "Frontier CAGR", "
 
 
 def select_frontier_assets(config: Config) -> list[str]:
+    """Optimizer universe: eligible assets only, leveraged labels replacing their underlying if enabled.
+
+    A configured but ineligible asset (e.g. a benchmark or a disabled holding) and the synthetic
+    leveraged version of an ineligible underlying never enter the optimizer.
+    """
     labels = {name: leveraged_name(name, factor) for name, factor in config.leverage}
-    return [labels.get(a.name, a.name) if config.include_leveraged_in_frontier else a.name for a in config.assets]
+    return [labels.get(name, name) if config.include_leveraged_in_frontier else name
+            for name in eligible_names(config)]
+
+
+def ineligible_labels(config: Config) -> set[str]:
+    """Configured names (and their leveraged labels) excluded from direct allocation by eligibility."""
+    allowed = set(eligible_names(config))
+    excluded = {a.name for a in config.assets if a.name not in allowed}
+    return excluded | {leveraged_name(name, factor) for name, factor in config.leverage if name in excluded}
 
 
 class PortfolioOptimizer:
@@ -61,16 +74,24 @@ class PortfolioOptimizer:
         self.expected = estimate_expected_returns(self.returns, config.expected_return_method, config.trading_days)
         self.mu = self.expected.values.to_numpy()
         self.n = prices.shape[1]
-        # Optional investor upper bounds (policy, not model); 1 = only the long-only bound.
-        limits = dict(config.max_weights)
-        outside = [name for name in limits if name not in prices.columns]
-        if outside:
-            raise ValueError(f"Investor max weights {outside} do not match optimizer assets {list(prices.columns)}.")
+        # Optional investor bounds (policy, not model); [0, 1] = only the long-only bounds.
+        # Limits on assets excluded by eligibility are moot and ignored; any other mismatch fails.
+        excluded = ineligible_labels(config)
+        limits, floors = dict(config.max_weights), dict(config.min_weights)
+        for kind, values in (("max", limits), ("min", floors)):
+            outside = [name for name in values if name not in prices.columns and name not in excluded]
+            if outside:
+                raise ValueError(f"Investor {kind} weights {outside} do not match optimizer assets "
+                                 f"{list(prices.columns)}.")
         self.upper = np.array([float(limits.get(name, 1.)) for name in prices.columns])
-        self.constrained = bool((self.upper < 1).any())
+        self.lower = np.array([float(floors.get(name, 0.)) for name in prices.columns])
+        self.constrained = bool((self.upper < 1).any() or (self.lower > 0).any())
         if self.upper.sum() < 1 - 1e-12:
             raise ValueError(f"Investor max weights are infeasible: the {self.n} asset limits sum to "
                              f"{self.upper.sum():.2%} < 100%.")
+        if self.lower.sum() > 1 + 1e-12 or (self.lower > self.upper + 1e-12).any():
+            raise ValueError(f"Investor min weights are infeasible: they sum to {self.lower.sum():.2%} "
+                             "or exceed a max weight.")
         self.years = (prices.index[-1] - prices.index[0]).days / config.calendar_days_per_year
         self.log = []
         self.equal = np.full(self.n, 1 / self.n)
@@ -108,7 +129,7 @@ class PortfolioOptimizer:
 
     def cap_and_normalize(self, x, lower=None, upper=None):
         """Clip to [lower, upper] and restore sum 1 without leaving any bound (fixed weights stay exact)."""
-        lower = np.zeros(self.n) if lower is None else lower
+        lower = self.lower if lower is None else lower
         upper = self.upper if upper is None else upper
         w = np.clip(x, lower, upper)
         residual = 1 - w.sum()
@@ -131,7 +152,8 @@ class PortfolioOptimizer:
         attempts = []
         explicit = bounds is not None
         if not explicit:
-            bounds = [(0., float(cap)) for cap in self.upper] if self.constrained else [(0., 1.)] * self.n
+            bounds = ([(float(low), float(cap)) for low, cap in zip(self.lower, self.upper)]
+                      if self.constrained else [(0., 1.)] * self.n)
         lower, upper = (np.array([b[0] for b in bounds]), np.array([b[1] for b in bounds]))
         for ftol in (1e-10, 1e-7):
             result = minimize(objective, start, jac=gradient, method="SLSQP",
@@ -197,12 +219,16 @@ class PortfolioOptimizer:
 
     def core_portfolios(self) -> dict[str, dict]:
         """Minimum Volatility, Maximum CAGR and multi-start Maximum Sharpe, from these prices only."""
+        # Starts are projected onto the investor bounds (a no-op without constraints).
+        start = self.cap_and_normalize(self.equal) if self.constrained else self.equal
         minimum = self.solve(lambda w: self.variance(w) / self.variance_scale,
-                             lambda w: 2 * self.sigma @ w / self.variance_scale, self.equal, "Minimum Volatility")
-        maximum = self.solve(self.growth_objective, self.growth_gradient, self.equal, "Maximum CAGR")
-        candidates = [self.solve(self.sharpe_objective, self.sharpe_gradient, start, f"Maximum Sharpe start {i}")
-                      for i, start in enumerate([self.equal, minimum["weights"].to_numpy(),
-                                                maximum["weights"].to_numpy(), *np.eye(self.n)])]
+                             lambda w: 2 * self.sigma @ w / self.variance_scale, start, "Minimum Volatility")
+        maximum = self.solve(self.growth_objective, self.growth_gradient, start, "Maximum CAGR")
+        starts = [self.equal, minimum["weights"].to_numpy(), maximum["weights"].to_numpy(), *np.eye(self.n)]
+        if self.constrained:
+            starts = [self.cap_and_normalize(point) for point in starts]
+        candidates = [self.solve(self.sharpe_objective, self.sharpe_gradient, point, f"Maximum Sharpe start {i}")
+                      for i, point in enumerate(starts)]
         sharpe = min(candidates, key=lambda p: self.sharpe_objective(p["weights"].to_numpy()))
         return {"Minimum Volatility": minimum, "Maximum CAGR": maximum, "Maximum Sharpe": sharpe}
 
@@ -217,9 +243,11 @@ class PortfolioOptimizer:
             raise ValueError(f"Fixed weight {weight:.2%} for {asset} exceeds its investor limit.")
         if weight == 1:
             return self.metrics(np.eye(self.n)[i])
-        lower, upper = np.zeros(self.n), self.upper.copy()
+        if weight < self.lower[i]:
+            raise ValueError(f"Fixed weight {weight:.2%} for {asset} is below its investor minimum.")
+        lower, upper = self.lower.copy(), self.upper.copy()
         lower[i] = upper[i] = weight
-        if upper.sum() < 1 - 1e-12:
+        if upper.sum() < 1 - 1e-12 or lower.sum() > 1 + 1e-12:
             raise ValueError(f"Fixed weight {weight:.2%} for {asset} is infeasible with the other limits.")
         candidates = []
         for start in starts:
@@ -250,7 +278,7 @@ class PortfolioOptimizer:
                                             self.config.risk_free_rate, self.config.calendar_days_per_year)
         dominance = []
         for i, asset in enumerate(self.prices.columns):
-            if self.upper[i] < 1:
+            if self.upper[i] < 1 or np.delete(self.lower, i).any():
                 # A 100% position is outside the investor's limits, so it is not a frontier competitor.
                 continue
             single = self.metrics(np.eye(self.n)[i])
@@ -331,9 +359,9 @@ def compare_investor_constraints(prices: pd.DataFrame, config: Config,
     drops every investor limit, so the statistical optimum stays visible.
     """
     constrained_config = config if max_weights is None else with_max_weights(config, max_weights)
-    if not constrained_config.max_weights:
+    if not constrained_config.max_weights and not constrained_config.min_weights:
         raise ValueError("No investor max weights configured; the unconstrained optimizer is the reference.")
-    reference = optimize_frontier(prices, replace(constrained_config, max_weights=()))
+    reference = optimize_frontier(prices, replace(constrained_config, max_weights=(), min_weights=()))
     constrained = optimize_frontier(prices, constrained_config)
     limits = pd.Series(dict(constrained_config.max_weights), name="Investor limit", dtype=float)
     cost = pd.DataFrame([{"Portfolio": name, "Metric": metric,
@@ -397,7 +425,7 @@ def sharpe_weight_profile(prices: pd.DataFrame, config: Config, asset: str,
     applied (the asset's limit, if any, is only recorded for display). The default grid is
     0%..100% in 1% steps plus the exact unconstrained optimum, which must be recovered.
     """
-    reference = replace(config, max_weights=())
+    reference = replace(config, max_weights=(), min_weights=())
     prices = prices[select_frontier_assets(reference)]
     if asset not in prices.columns:
         raise ValueError(f"'{asset}' is not an optimizer asset; choose from {list(prices.columns)}.")
@@ -435,3 +463,34 @@ def sharpe_weight_profile(prices: pd.DataFrame, config: Config, asset: str,
     return WeightProfile(asset, optimum_weight, optimum, table,
                          pd.DataFrame(allocations).T.rename_axis(f"{asset} weight"),
                          pd.DataFrame(near).set_index("Threshold"), limit)
+
+
+def constrained_equal_weights(assets, config: Config, tolerance: float = 1e-12) -> pd.Series:
+    """Feasible weights closest (Euclidean) to 1/n under the investor bounds of `config`.
+
+    Deterministic, parameter-free baseline: w_i = clip(1/n + tau, lower_i, upper_i) with tau solved by
+    bisection so that the weights sum to one (the projection of equal weights onto the capped simplex).
+    Bounds on names outside `assets` (ineligible) are ignored like in the optimizer; infeasible bounds
+    raise, nothing is relaxed. Without bounds it is exactly 1/n.
+    """
+    assets = list(assets)
+    n = len(assets)
+    if not n:
+        raise ValueError("Constrained equal weight needs at least one asset.")
+    caps, floors = dict(config.max_weights), dict(config.min_weights)
+    upper = np.array([float(caps.get(a, 1.)) for a in assets])
+    lower = np.array([float(floors.get(a, 0.)) for a in assets])
+    if upper.sum() < 1 - tolerance or lower.sum() > 1 + tolerance or (lower > upper + tolerance).any():
+        raise ValueError(f"Investor bounds are infeasible for a fully invested portfolio of {assets}: "
+                         f"maximum weights sum to {upper.sum():.2%}, minimum weights to {lower.sum():.2%}.")
+    target = np.full(n, 1 / n)
+    low, high = -1., 1.
+    for _ in range(200):
+        tau = (low + high) / 2
+        total = np.clip(target + tau, lower, upper).sum()
+        if abs(total - 1) <= tolerance:
+            break
+        low, high = (tau, high) if total < 1 else (low, tau)
+    weights = np.clip(target + tau, lower, upper)
+    weights = weights / weights.sum()
+    return pd.Series(weights, index=assets, name="Constrained Equal Weight")

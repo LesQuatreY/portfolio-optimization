@@ -1,101 +1,136 @@
 # Portfolio Lab
 
-A reproducible historical portfolio study for an **EUR-based investor**. It compares economic asset returns, constructs simplified daily-reset leveraged exposures and finds long-only portfolios that maximize historical compounded growth under annualized volatility ceilings. This is an in-sample research tool: it does not estimate future expected returns or provide an execution strategy.
+A reproducible research system for an **EUR-based investor** (10-20 year horizon) looking for portfolio *selection methods* that generalize, across risk levels and configurable asset universes. It estimates long-only frontiers and risk-profiled allocations, then evaluates the same policies **out of sample** with a strictly chronological annual walk-forward.
 
-The notebook is an orchestration layer. Configuration, data validation, FX normalization, calculations, solvers and reporting live in the installed Python package. The original notebook is retained unchanged in `notebooks/archive/draft.ipynb` as audit evidence; it is not the runnable analysis entry point.
+It is a research tool: it provides no forecast, no investment advice and no execution strategy. Historical optima, in-sample or out-of-sample, are not future optima.
+
+## Central research question
+
+> Pour chaque niveau de risque que je suis prêt à accepter, quel portefeuille semble offrir la meilleure croissance composée à long terme, sans que cette conclusion repose uniquement sur un heureux hasard historique ?
+
+Every modelling and research decision is judged against this question. Realized CAGR is the primary growth measure, annualized volatility the primary risk axis and maximum drawdown an essential complementary risk measure; investor constraints and the eligible universe are configurable. The estimated optimization frontier (expected arithmetic return and covariance), the weights chosen from it, realized historical performance and chronological out-of-sample performance are four different things and are always labelled as such.
+
+Two research constraints have equal, primary priority:
+
+* **A. Prevent overfitting.** Historical optimization performance is never evidence of future performance. Look-ahead, leakage, universe-selection bias, multiple testing and repeated use of the 2013-2019 validation years are controlled by the holdout lock, the walk-forward protocol and the experiment registry ([docs/RESEARCH_PROTOCOL.md](docs/RESEARCH_PROTOCOL.md)).
+* **B. Model and portfolio stability.** A construction method is not attractive merely because it occasionally produces a high CAGR. Fold-to-fold target-weight changes, traded turnover, concentration, sensitivity of the weights to the training sample (training-only bootstrap) and to the estimation window, dependence on single years and on one volatile or synthetic asset are measured (`src/portfolio_lab/stability.py`) and must shape conclusions. Market volatility and model instability are different things, and legitimate adaptation is not penalized as such. No composite growth-plus-stability score is computed; comparisons are multi-criteria and transparent.
+
+## Research protocol (read first)
+
+All boundaries are exclusive upper bounds (`date < boundary`) and are defined in `src/portfolio_lab/protocol.py`.
+
+| Period | Dates | Use |
+|---|---|---|
+| Development | before 2013-01-01 (data start 2000-12-29) | exploration, in-sample frontier analysis (default window of `portfolio_analysis.ipynb`) |
+| Validation | test years 2013-2019 | walk-forward evaluation only (`portfolio_robustness.ipynb`) |
+| Final holdout | from 2020-01-01 | **locked**, technically inaccessible |
+
+**Holdout lock.** No research configuration can end after 2020-01-01 (`Config`, `config/research.yaml`), every provider refuses such a request and rejects returned rows on or after the boundary, `validate_prices` (the choke point of every return, metric, optimizer, walk-forward and bootstrap computation) rejects them, exported files and executed notebooks are scanned for holdout dates after writing, and tests check that the active notebooks contain none. There is no flag that lifts the lock: a final evaluation must be a separate, explicitly authorized change of `protocol.py`.
+
+**Known prior exposure.** Results covering 2020-2026 were produced and read before this lock existed (see [docs/HOLDOUT_EXPOSURE.md](docs/HOLDOUT_EXPOSURE.md)). The holdout is a reserved period with known information exposure, **not** a pristine out-of-sample test. A genuinely prospective evaluation needs future data.
+
+**Validation overfitting.** Each walk-forward run is appended to `experiments/registry.jsonl` (configuration snapshot, evaluated universe and walk-forward settings, git commit plus a hash of uncommitted engine changes, declared category and hypothesis, results; identical reruns are marked as reruns, reruns on changed code as superseding). The selection rules are in [docs/RESEARCH_PROTOCOL.md](docs/RESEARCH_PROTOCOL.md). Choosing the best policy, universe, constraint or estimator by its 2013-2019 result biases that result upward; seven years say little about rare regimes or worst drawdowns.
 
 ## Repository
 
 ```text
 portfolio-optimization/
+  config/research.yaml           Single shared research configuration (universe, leverage, constraints, protocol)
   notebooks/
-    portfolio_analysis.ipynb       Lightweight study entry point
-    portfolio_robustness.ipynb     Subperiod stability and walk-forward out-of-sample validation
-    archive/draft.ipynb            Original notebook, for regression audit
+    portfolio_analysis.ipynb     In-sample analysis: frontier, allocations, sensitivity, bootstrap (French UI)
+    portfolio_robustness.ipynb   Out-of-sample walk-forward 2013-2019, universe comparison, registry (French UI)
+    archive/draft.ipynb          Original notebook, regression evidence only (not a research entry point)
   src/portfolio_lab/
-    assets.py                     Central ticker catalogue and metadata resolution
-    config.py                     Immutable study parameters and universe selection
-    data.py                       Provider protocol, Yahoo/CSV, snapshots, alignment
-    currency.py                   Explicit USD-per-EUR conversion
-    returns.py                    Price validation and observed interval returns
-    leverage.py                   Native-session daily-reset synthetic NAV
-    metrics.py                    Calendar CAGR and performance statistics
-    optimization.py               SLSQP growth frontier, Sharpe and volatility caps
-    plotting.py                   Charts and display allocations
-    reporting.py                  CSV evidence and independent numerical checks
-    robustness.py                 Subperiod re-estimation, annual walk-forward OOS, turnover, HHI
-  tests/                          Offline pytest fixtures and legacy regression
-  outputs/                        Executed notebook, tables, figures and audit logs
-  run.py                          Fresh-kernel execution with repository-local caches
-  scripts/check_regression.py      Equal-input original/new optimization comparison
-  pyproject.toml                  Installable src package and dependency metadata
-  requirements.txt                Runtime installation (-e .)
-  requirements-dev.txt            Runtime plus pytest and notebook execution
-  .gitignore
+    protocol.py                  Date boundaries, holdout lock, output scanners
+    research.py                  research.yaml loader, the single data path of both notebooks
+    config.py                    Immutable engine Config, eligibility, constraints, walk-forward settings
+    assets.py                    Central ticker catalogue and metadata
+    data.py                      Providers (Yahoo, MSCI, FRED, CSV), snapshots, alignment
+    currency.py / returns.py     USD -> EUR conversion, observed interval returns
+    leverage.py                  Native-session daily-reset synthetic NAV with fee/financing drag
+    metrics.py                   Calendar CAGR and performance statistics
+    covariance.py / expected_returns.py   Ledoit-Wolf / sample covariance, sample / Bayes-Stein means
+    optimization.py              SLSQP growth frontier, Maximum Sharpe, volatility ceilings, investor bounds
+    robustness.py                Walk-forward, universe comparison, OOS uncertainty, subperiods
+    simulation.py                Wealth simulation of target weights (annual drift / constant mix, costs)
+    rates.py                     Point-in-time historical short rates (risk-free EUR, financing per currency)
+    stability.py                 Allocation-stability diagnostics (target changes, turnover, concentration, bootstrap)
+    bootstrap.py                 Stationary-bootstrap frontier uncertainty (in-sample)
+    experiments.py               Append-only experiment registry
+    charts.py                    Plotly charts (French labels); plotting.py keeps the legacy matplotlib charts
+    reporting.py                 CSV evidence, numerical checks, export safety checks
+  experiments/registry.jsonl     Recorded validation experiments (tracked)
+  tests/                         Offline pytest suite (synthetic data, all dated before 2020)
+  outputs/                       Executed notebooks, CSV/HTML exports (git-ignored)
+  run.py                         Fresh-kernel notebook execution (outputs safety-checked) or tests
 ```
 
 ## Installation and execution
 
-Python 3.10 or newer is required. Start a terminal in this repository. PowerShell commands:
+Python 3.10 or newer. PowerShell, from the repository root:
 
 ```powershell
 New-Item -ItemType Directory -Force tmp,.cache | Out-Null
-$env:TEMP = Join-Path (Get-Location) 'tmp'
-$env:TMP = $env:TEMP
+$env:TEMP = Join-Path (Get-Location) 'tmp'; $env:TMP = $env:TEMP
 $env:PIP_CACHE_DIR = Join-Path (Get-Location) '.cache/pip'
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-# For tests and automated clean-kernel notebook execution:
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-.\.venv\Scripts\python.exe run.py --test
-.\.venv\Scripts\python.exe run.py
+.\.venv\Scripts\python.exe run.py --test          # offline test suite
+.\.venv\Scripts\python.exe run.py                 # both notebooks, fresh kernels -> outputs/*.executed.ipynb
+.\.venv\Scripts\python.exe run.py portfolio_robustness
 ```
 
-`requirements.txt` installs the project and all runtime dependencies through `pyproject.toml`; there are no undeclared analysis dependencies. `requirements-dev.txt` adds pytest, nbconvert and nbclient. The verified environment's exact installed versions are recorded in `outputs/dependencies-lock.txt`; declared ranges permit later compatible updates, while snapshots and the version record identify this run.
+`run.py` refuses to write an executed notebook whose outputs mention a holdout date. For interactive use, start JupyterLab after one `run.py` call (it registers the **Portfolio Lab** kernel), open a notebook and *Run All*. Market data are read from integrity-checked snapshots in `.cache/market`; a missing snapshot is downloaded once (always with an end before 2020-01-01).
 
-For interactive use, after one `run.py` invocation has created the local kernelspec:
+## Configuring the study: `config/research.yaml`
 
-```powershell
-$env:MPLCONFIGDIR = Join-Path (Get-Location) '.cache/matplotlib'
-$env:IPYTHONDIR = Join-Path (Get-Location) '.cache/ipython'
-$env:JUPYTER_CONFIG_DIR = Join-Path (Get-Location) '.cache/jupyter/config'
-$env:JUPYTER_DATA_DIR = Join-Path (Get-Location) '.cache/jupyter/data'
-$env:JUPYTER_RUNTIME_DIR = Join-Path (Get-Location) '.cache/jupyter/runtime'
-.\.venv\Scripts\python.exe -m jupyter lab notebooks/portfolio_analysis.ipynb
-```
+Both notebooks call `load_research_study()`, which reads only this file; notebooks contain no study parameter. Every value is validated (unknown keys, unknown assets, infeasible bounds and any end after 2020-01-01 fail with an explicit message).
 
-Select the **Portfolio Lab** kernel. Run all cells. Automatic execution uses that same interpreter in a fresh kernel, fails on any cell error and writes `outputs/portfolio_analysis.executed.ipynb`. `run.py` configures all runtime/cache paths inside the repository. Offline tests require no market-data network access. For a literal `pytest -q`, configure the same runtime environment and activate the venv; the provided wrapper calls pytest with `-q` and a repository-local temporary directory.
+* **`universe`**: assets eligible for **direct** allocation (`display name: registered symbol`). Eligible does not mean held: the optimizer may give any eligible asset exactly 0%, and no minimum weight is implied. Comment out a line to make an asset ineligible: it can then never receive a direct weight (nor can its leveraged version). Indirect exposure is unaffected: Apple remains inside Nasdaq 100, S&P 500 and MSCI World.
+* **`benchmark`**: passive reference (default MSCI World NETR in EUR). It is always loaded, even if not eligible. Equal Weight over the eligible universe is always reported too.
+* **`leverage`** and **`leverage_costs`**: synthetic daily-reset exposures (`{Nasdaq 100: 2.0}` creates `Nasdaq 100 x2`, which replaces its underlying in the optimizer) and their running cost, `annual_fee + (L - 1) * (short_rate + financing_spread)`, accrued on calendar days.
+* **`rates`**: economically distinct roles, each a constant or a registered FRED series used point in time (`src/portfolio_lab/rates.py`): `risk_free` = EUR cash reference of Sharpe ratios and of the Maximum Sharpe objective (mean over each training window / evaluation period; default the OECD euro-area 3-month rate); `financing_base` = short rate of the leveraged product's own currency (default USD 3-month T-bill for Nasdaq 100 x2); `financing_spread` = borrowing spread (0.4%, assumption). No cash position is held, so no interest is credited.
+* **`holding_costs`**: annual cost turning an *index* series into an investable exposure (tracker TER, withholding suffered by a UCITS fund), accrued on calendar days: MSCI World 0.20%, S&P 500 0.35%, Gold 0.25% (assumptions, see docs/DATA_AUDIT.md). Stocks and ETFs priced by adjusted closes keep their embedded fees only.
+* **`constraints`**: investor `max_weights` / `min_weights` (fractions; names may be leveraged labels) and a mandatory `provenance` note. Current investor-declared preferences: **Gold <= 10%, Apple <= 40%** (confirmed after earlier validation results had been seen; not pre-registered, not optimized). Edit the numbers, keep the note truthful, *Run All*: they apply to **every** optimized portfolio, frontier point, risk profile, walk-forward fold and to the constrained equal-weight benchmark; infeasible bounds (e.g. caps of the eligible assets summing below 100%) fail explicitly, nothing is relaxed. The unconstrained optimum is shown only as a labelled research comparison.
+* **`estimation`**: covariance (`ledoit_wolf` | `sample`), expected returns for Maximum Sharpe (`sample` | `bayes_stein`).
+* **`risk_profiles`**: ceilings on **estimated** annualized volatility. They are not drawdown limits.
+* **`protocol`**: `study_end` (<= 2020-01-01), `development_end`, and `analysis_window` (`development` = in-sample analysis before 2013, recommended; `research` = all data before 2020, which overlaps the validation years and is descriptive only).
+* **`walk_forward`**: `rolling` | `expanding`, training years, test years 2013-2019, `annual` (buy and hold within the year) | `daily` (legacy constant mix) rebalancing, decision lag, transaction costs in basis points.
+* **`universe_variants`**: pre-specified universe comparisons as exclusions (`Sans Apple: [Apple]`). Keep the list short.
 
-## Configuration
+To register a new symbol, add an `Asset(...)` entry to `ASSET_CATALOGUE` in `src/portfolio_lab/assets.py` (verified currency, return treatment and source), then reference it in the YAML. `load_config()` / `configure_universe()` remain as package-level APIs for scripts and tests, with legacy defaults; research notebooks must not use them.
 
-`load_config()` in `config.py` retains sensible project defaults. The notebook's **User configuration** cell contains only an `assets` mapping of display name to ticker and a `leveraged_assets` mapping of name to leverage factor. `configure_universe(load_config(project_dir), assets, leveraged_assets)` resolves the selected tickers into the single effective immutable configuration passed to every analytical step. The notebook intentionally avoids duplicating technical metadata.
+## Portfolio accounting (`src/portfolio_lab/simulation.py`)
 
-Financial metadata is centrally registered in `ASSET_CATALOGUE` in `src/portfolio_lab/assets.py`: symbol, listing currency, instrument, return classification, distribution treatment, limitations and reference URL. Changing a ticker resolves its own metadata; it never inherits the old instrument's metadata. Supported return types are `Price Return`, `Total Return`, `Gross Return`, `Net Return`, `Net Total Return` and `Adjusted price`. Each entry also names its data `provider` (`"yahoo"` by default, `"msci"` for official MSCI index levels), so selecting a symbol in the notebook routes it to the right source automatically. EUR assets need no FX conversion; USD entries automatically request the configured EURUSD series and convert upstream. Yahoo's existing provider uses adjusted prices only for `Adjusted price`; gross-return index levels are not dividend-adjusted again. Unsupported currencies fail explicitly.
+The optimizer **estimates target weights** from daily return observations. The observation frequency is not a trading frequency: Minimum Volatility and Maximum Sharpe use one-period moments of a static target, while the Maximum CAGR / frontier / risk-profile objective maximizes the historical log growth of a *constant mix* (weights reset at every common observation). The in-sample "model" CAGR, volatility and drawdown shown on the frontier describe that constant mix without costs; they are labelled as such.
 
-For example, edit the notebook configuration before its `configure_universe(...)` call:
+How the targets are *implemented* is a separate, explicit convention shared by the in-sample "implemented" metrics (`implemented_metrics`) and the walk-forward:
 
-```python
-del assets["Dow Jones"]
-assets["iShares Core MSCI World"] = "IWDA.AS"  # Already registered; Amsterdam EUR ETF listing.
-config = configure_universe(load_config(project_dir), assets, leveraged_assets)
-```
+* **Annual rebalancing (baseline, fixed on economic grounds before measuring):** at the close of the last session of each calendar year the portfolio is traded to its targets; holdings are then fixed and weights drift with prices until the next year-end close.
+* **Costs:** `transaction_cost_bps` one-way per unit of traded notional: `cost = c * sum_i |w_target,i - w_drifted,i|`, i.e. every buy and every sell pays c. The first allocation is bought from cash (traded notional 1). The cost is deducted at the rebalance close and booked in the first return after it; the neglected self-financing term is O(c^2).
+* **Fully invested, no cash:** weights must sum to one; nothing earns or pays interest except the synthetic leverage financing inside the leveraged NAV.
+* `daily` (constant mix) remains available as a labelled model reference; its intra-year trading is not costed, so it is not an investable result.
 
-Selecting, renaming, adding or removing a registered ticker needs no package edits. Unknown symbols raise `Unknown asset symbol 'XYZ'. Register its metadata in src/portfolio_lab/assets.py.` before downloading data. To register a new symbol, add an `Asset(...)` entry to the catalogue's tuple in `assets.py`, verifying its listing currency, return treatment and source first. For example, the existing CAC entry is:
+The remaining gap between the optimizer's constant-mix growth objective and the annually rebalanced implementation (the within-year rebalancing effect) is reported, not hidden: the analysis notebook shows "model" and "implemented" columns side by side.
 
-```python
-Asset("CAC 40", "PX1GR.PA", "CAC 40 Gross Return Index", "EUR", "Gross Return",
-      "Gross dividends reinvested in index levels; no additional dividend adjustment",
-      "Yahoo daily history has missing observations; inspect raw valid end and missing counts before interpreting coverage.",
-      reference="https://live.euronext.com/en/product/indices/QS0011131834-XPAR"),
-```
+## Walk-forward methodology (`portfolio_robustness.ipynb`)
 
-The catalogue and its entries are immutable at runtime. New registration happens in the package, keeping the normal notebook workflow short and the metadata auditable. IWDA's listing currency is EUR even though the fund's base currency is USD; this does not imply currency hedging. Its listing and accumulating treatment are documented by [iShares](https://www.ishares.com/uk/individual/en/products/251882/ishares-core-msci-world-ucits-etf-usd-acc). Its Yahoo history is short, so the default MSCI World exposure is the official index `MSCI:990100:NETR` instead (see below).
+For each test year Y in 2013-2019 (strict mode: every requested year must yield a complete fold with >= 200 common sessions in every training and test year, otherwise an explicit error):
 
-Run **all cells** after an edit so no old notebook outputs remain in memory. To remove Apple, also remove `leveraged_assets["Apple"]`; otherwise validation explains that its leveraged underlying is missing before any download starts. The exported `effective-config.json` records the exact notebook configuration used, including assets, leverage and study parameters. The optional archived-engine regression script reads this export rather than independently reloading default assets.
+1. Training window: the 10 calendar years before Y (rolling), or all history since the data start (expanding check), always preceded by one return-base observation; no history is ever inferred before an asset existed.
+2. Expected returns, Ledoit-Wolf covariance, Bayes-Stein intensity (if selected) and all optimizations are fitted on that window only. With `decision_lag_sessions = 1` the final session before Y is excluded from estimation: the decision uses the previous close, the trade happens at the last close before Y.
+3. Policies: Maximum Sharpe, Minimum Volatility and each risk profile (maximum historical log growth under the estimated-volatility ceiling; pre-specified fallback to Minimum Volatility when the ceiling is infeasible in a window, flagged in `train_metrics`).
+4. Weights are frozen, then held through Y with `annual` rebalancing (they drift with prices). Costs = `transaction_cost_bps` x traded notional, against the drifted holdings (the first allocation is bought from cash), booked on the first test-year return. Equal Weight follows identical rules; the passive benchmark is bought once.
+5. The OOS series is the chronological concatenation of test-year returns; CAGR (calendar days), volatility, Sharpe, maximum drawdown, CAGR excluding the best year, gross CAGR and turnover are computed on it, never by averaging annual CAGRs.
+6. Uncertainty (descriptive): `(1 + CAGR_policy) / (1 + CAGR_reference) - 1` with a stationary bootstrap of date-paired daily log-differences under three block lengths fixed in advance (automatic Politis-White, 21 and 63 sessions, all reported), plus a leave-one-year-out table. Realized weights are held fixed, so the ranges describe daily sampling noise under stationarity, not regime risk; with seven years they are not significance tests.
 
-Use `dataclasses.replace(config, ...)` in the same cell for target volatility profiles, risk-free rate, trading-days convention, frontier resolution, provider, snapshot location and exclusive end date. The recorded end date remains exclusive and deliberately excludes the current incomplete session.
+Execution timing, precisely: estimation uses observations up to the close of the second-to-last session of year Y-1 (`train_end`); the order is executed at the close of the last session of Y-1 (`rebalance_date`, a next-close execution, not same-close); the return of that session is still earned by the previous holdings; the new holdings earn from the first session of Y. FX for USD assets is the FRED noon fixing of the same date, known before the close.
 
-Six of the default economic exposures originate in the old notebook: Apple, Nasdaq 100, S&P 500, Dow Jones, CAC 40 and gold; MSCI World (official NETR index) was added since. AAPL remains the primary US listing. There is no leverage by default: `leveraged_assets = {}` (or `None`) gives a fully unleveraged study and clears any leverage already on the config, and a factor of `1` is the plain asset. Only explicit factors above 1, e.g. `{"Apple": 1.5, "Nasdaq 100": 2.0}`, create synthetic daily-reset series (`Apple x1.5`, `Nasdaq 100 x2`), which replace their unleveraged exposures in the optimization universe when `include_leveraged_in_frontier=True`; both versions still appear in asset statistics. Turning the switch off changes only the optimization universe.
+Design choices: rolling 10-year windows are the primary method; the expanding window is one pre-specified robustness check. Nested walk-forward is **not** implemented: the engine has no tuned hyperparameter, and adding model selection would be the moment to add it. Purged/embargoed CV is unnecessary here (annual, non-overlapping targets with no event labels). Blocked K-fold CV would train on the future and is rejected for a sequential investment decision.
+
+**Universe comparison** runs the identical walk-forward for each pre-specified variant on the same prices and dates; only eligibility changes. Asset subsets are a research choice made with hindsight (e.g. Apple's inclusion), so these comparisons are descriptive, not a search.
+
+**In-sample diagnostics** (frontier, sensitivity map, bootstrap bands, subperiod stability on 2001-2006 / 2007-2012) never use validation years by default and are labelled in-sample everywhere.
 
 ## Total investor return and provenance
 
@@ -107,7 +142,7 @@ These series are deliberately distinguished:
 * **Net Return** reinvests dividends after the benchmark's assumed withholding tax, which need not equal a particular investor's actual tax.
 * **Net Total Return** is MSCI's NETR variant (e.g. MSCI World, index code 990100): net dividends reinvested after MSCI's withholding-tax assumptions. It is an index level, not an ETF adjusted price: its `pct_change()` already is the total return, so no dividend or Yahoo adjustment is ever applied. Levels are USD and unhedged; EUR conversion uses the same EURUSD path as other USD assets.
 * **Adjusted price** for equities/ETFs uses Yahoo's split and dividend adjustment, as a practical reinvestment proxy. It is not claimed to be an independently audited gross/net benchmark. ETF adjustments inherit fees and tracking behavior of that ETF.
-* **Gold futures quotation** produces no dividends but its percentage price changes are not the total return of a rolling futures investment. Roll yield, collateral income and financing are absent.
+* **Gold futures quotation** (`GC=F`): Yahoo's continuous front-month series, not back-adjusted, tracks the nearby contract, i.e. approximately spot gold. Audited against GLD over 2004-2019 (docs/DATA_AUDIT.md, criteria written before the comparison): +0.42%/yr versus GLD's 0.40% fee, monthly correlation 0.995, daily discrepancies that reverse (settlement timing), a small roll sawtooth netting out over the year. It is kept as a spot proxy with a 0.25%/yr physical-ETC holding cost; no collateral yield is added (it would double count the carry).
 
 Metadata for every configured exposure includes provider, symbol, instrument, currency, return classification, distribution treatment, source references and limitations. `outputs/provenance.csv` also records actually observed raw start/end, counts, missing values, FX omissions and the final common calendar. The synthetic rows explicitly inherit the underlying provenance and identify the native-currency daily reset.
 
@@ -115,11 +150,17 @@ Genuine TR benchmark sources are preferred when their histories are accessible a
 
 Benchmark references: [Nasdaq XNDX](https://indexes.nasdaqomx.com/Index/Overview/xndx), [S&P 500](https://www.spglobal.com/spdji/en/indices/equity/sp-500/), [Dow Jones Industrial Average](https://www.spglobal.com/spdji/en/indices/equity/dow-jones-industrial-average/) and [CAC 40 GR](https://live.euronext.com/en/product/indices/QS0011131834-XPAR). See the executed provenance table for the configured Yahoo symbols and actual available dates.
 
-## Optional investor constraints
+## Benchmark comparability
 
-The statistical optimizer and investor preferences are kept apart. By default (`Config.max_weights = ()`) the optimizer is unconstrained apart from long-only, fully invested weights, and its results are the reference. `with_max_weights(config, {"Gold": 0.10})` adds per-asset upper bounds for any optimizer asset (names must be configured assets or leveraged labels; `0 < limit <= 1`; limits that cannot sum to 100% fail before optimizing). They become SLSQP bounds for every portfolio, frontier point and target; capped assets leave the single-asset dominance check, since a 100% position is outside the policy.
+* **Constrained Equal Weight (investable, primary reference):** the feasible portfolio closest (Euclidean) to 1/n under exactly the investor bounds and eligibility of the policies (`constrained_equal_weights`, deterministic, parameter-free); same annual rebalancing, execution timing and costs.
+* **Equal Weight (unconstrained, descriptive):** 1/n over the optimizer universe (it includes the synthetic leveraged series when one replaces its underlying) and ignores investor caps, so it may be non-investable under the investor's policy.
+* **Passive benchmark (MSCI World NETR in EUR):** net-dividend index made investable with a 0.20%/yr tracker holding cost; bought once at the first rebalance close (one cost), then held.
+* Index series (S&P 500 gross TR, MSCI World net TR, gold spot proxy) carry explicit holding costs; stocks and ETFs keep their adjusted-close basis (pre-tax). Remaining basis differences are documented in docs/DATA_AUDIT.md.
+* All series are converted to EUR before returns; all comparisons share the same dates, currency, execution convention and Sharpe risk-free rate.
 
-`compare_investor_constraints(prices, config, {"Gold": 0.10})` always runs the unconstrained reference next to the constrained optimizer on the same data and reports, for Maximum Sharpe, Minimum Volatility and Maximum CAGR, the realized CAGR, volatility, Sharpe and maximum drawdown (difference = constrained − unconstrained) plus weights and the investor limit per asset. This is the in-sample historical cost of a personal policy, not evidence that either portfolio is statistically superior. `portfolio_analysis.ipynb` shows it in its own section (`investor_max_weights`); `portfolio_robustness.ipynb` uses no limits unless `config.max_weights` is set explicitly (walk-forward then applies them in every fold; the Equal Weight benchmark stays 1/n).
+## Investor constraints
+
+Configured in `config/research.yaml` (`constraints`), `Config.max_weights` / `Config.min_weights` become SLSQP bounds for every portfolio, frontier point, risk profile and walk-forward fold; infeasible combinations (caps summing below 100%, floors above 100% or above a cap) fail before optimizing. Bounds on an asset excluded by eligibility are moot and ignored; any other unknown name fails. Assets whose 100% position is outside the bounds leave the single-asset dominance check. `compare_investor_constraints(prices, config)` shows the unconstrained reference next to the constrained optimum on the same data (difference = constrained - unconstrained): the in-sample historical cost of a personal policy, not evidence that either portfolio is superior. Equal Weight stays 1/n even when it violates a cap (it is a benchmark, not a policy).
 
 ### Sensitivity to one asset's weight
 
@@ -128,16 +169,6 @@ The statistical optimizer and investor preferences are kept apart. By default (`
 ### Bootstrap uncertainty of the frontier (in-sample)
 
 `portfolio_lab.bootstrap.bootstrap_frontier(prices, config, replications=500, seed=0)` asks how much the *estimated* frontier and Maximum Sharpe weights move when the historical sample is perturbed. The methodology was fixed before any result was inspected and is not tuned: a stationary bootstrap (Politis & Romano 1994) of whole daily return rows, with expected block length from Politis & White (2004) as corrected by Patton, Politis & White (2009) (`arch.bootstrap.optimal_block_length`, mean of the per-asset values, at least 1), 500 replications and seed 0. Each replication rebuilds prices on the original dates and runs the engine with the configured estimators (Minimum Volatility, Maximum CAGR, multi-start Maximum Sharpe, and the frontier rule at 25 common estimated-volatility ceilings). Bands are percentiles over replications where a ceiling is feasible (80%: 10th–90th, 95%: 2.5th–97.5th), drawn only where ≥ 95% of replications are feasible; Maximum Sharpe weights get 5th/25th/50th/75th/95th percentiles. Replications run in parallel processes (one BLAS thread each) from indices drawn up front, so results do not depend on the worker count. These are *bootstrap uncertainty bands*, an in-sample diagnostic distinct from the near-optimal map (flatness of the objective around one estimate) and from the walk-forward (out-of-sample).
-
-## Robustness and out-of-sample validation
-
-`notebooks/portfolio_robustness.ipynb` asks a different question than the main notebook: how stable is the optimized portfolio through time, and how does it perform out of sample? It starts from the same `load_config()` defaults (universe, providers, EUR conversion, leverage, engine settings); all logic is in `portfolio_lab.robustness`, which calls the engine's `PortfolioOptimizer.core_portfolios()` (Minimum Volatility, Maximum CAGR, multi-start Maximum Sharpe) rather than re-implementing it.
-
-* **Full-sample optimization** (main notebook) is descriptive and in-sample.
-* **Subperiod stability** re-estimates the engine independently on 2001–2010, 2011–2020 and 2021–latest (actual common dates). It is still in-sample within each period and is **not** an out-of-sample test. Per-asset mean/min/max/sample-std weight and the share of near-zero (< 1e-4) weights summarize stability.
-* **Walk-forward** is the out-of-sample test. For each calendar test year, Maximum Sharpe and Minimum Volatility are estimated on the previous 10 full calendar years only, frozen, and applied to that year only. Folds come from the actual common history (a training window needs an observation before its first year as its return base); the final year can be incomplete and is flagged. Equal Weight uses the same optimizer universe; MSCI World is its realized EUR return. The OOS curve is the chronological concatenation of test-year returns only, and its CAGR/volatility/Sharpe/drawdown come from `compute_asset_metrics`.
-
-Weights follow the engine's convention: constant targets rebalanced at every common observation; walk-forward re-estimates the targets annually. Turnover is `0.5 × Σ|w_t − w_{t−1}|` between consecutive annual targets (the first allocation has none; within-year rebalancing to target is not counted). Concentration is `HHI = Σ w²` and effective number of assets `1 / HHI`; it is diagnostic only, with no weight caps imposed. OOS results are for evaluation and are not used to tune anything; they are not evidence of future performance.
 
 ## Data layer and reproducibility
 
@@ -174,7 +205,7 @@ Reset/compounding happens on every observed underlying session inside the study 
 
 For USD exposures, this native-currency synthetic NAV is then divided by EURUSD. FX itself is not leveraged, matching an EUR investor holding an unhedged USD daily-reset product. Applying leverage to EUR-converted asset returns would describe a different EUR-reset exposure and is intentionally not the default. Missing FX on intermediate dates does not skip native reset sessions.
 
-Synthetic leverage excludes financing/borrowing costs, ETF fees, tracking error, transaction costs, taxes, liquidity and implementation constraints, and intraday rebalancing. It is an educational exposure model, not a reconstruction of a traded leveraged ETF.
+With `leverage_costs`, each interval also pays `(annual_fee + (L - 1) * financing_rate) * calendar_days / 365.25`, so `NAV(t) = NAV(t-1) * max(0, 1 + L * r(t) - drag(t))`. The research configuration uses a constant 0.6% fee and 1.5% financing rate (2.1% per year for x2): a crude average, since actual short rates varied from about 0% to 5% over 2001-2019. Tracking error, taxes, liquidity, intraday rebalancing and the variance drag of real products beyond the daily-reset formula are not modelled. It is an exposure model, not a reconstruction of a traded leveraged ETF.
 
 ## Metric definitions
 
@@ -201,7 +232,7 @@ The optimizer's risk model is one covariance estimate, `portfolio_lab.covariance
 
 Expected returns are used only by the Maximum Sharpe objective; Minimum Volatility uses covariance only, and Maximum CAGR, the frontier and named risk profiles maximize realized historical log growth. One estimator, `portfolio_lab.expected_returns.estimate_expected_returns`, is selected by `Config.expected_return_method`: `"sample"` (default; arithmetic mean of daily returns × `trading_days`, the project's reference behavior) or `"bayes_stein"`. Bayes-Stein is Jorion (1986, *JFQA* 21(3), 279–292), computed in daily units from the optimized window only: `Σ = S·(T−1)/(T−N−2)`, target `μ0 = 1′Σ⁻¹m / 1′Σ⁻¹1` (the minimum-variance portfolio mean), intensity `w = (N+2) / ((N+2) + T·(m−μ0)′Σ⁻¹(m−μ0))` in (0, 1] by construction, `μ_BS = (1−w)m + wμ0`, annualized once. No intensity is chosen by hand; walk-forward fits it per training window. It is reported as `Estimated return`; `Mean return annualized` and `Sharpe` stay realized historical metrics. Only Jorion's mean estimator is used; the covariance remains the configured covariance estimator.
 
-**Pre-specified Bayes-Stein experiment (2026-10-08).** The estimator above was fixed before its out-of-sample result was computed, run once on the annual 10-year walk-forward (Ledoit-Wolf covariance, data through 2026-10-02) and not modified afterwards; no parameter was tuned on OOS performance. Fold intensities ranged 0.29–0.57 (mean 0.45). Maximum Sharpe OOS, sample mean → Bayes-Stein: CAGR 16.01% → 13.86%, volatility 17.36% → 14.88%, Sharpe 0.953 → 0.958, max drawdown −35.12% → −34.88%, mean turnover 16.0% → 17.7%, mean effective assets 2.49 → 2.81; years beating Equal Weight 10/16 → 8/16, mean annual excess +2.2% → −0.3%, worst year 2013 (−27.9% → −29.2%). Minimum Volatility, Equal Weight and MSCI World are unaffected. Conclusion: no robustness improvement versus Equal Weight. The default stays `"sample"` to preserve the reference behavior; `"bayes_stein"` remains available for comparison.
+**Bayes-Stein experiment (2026-10-08, superseded).** An earlier one-off walk-forward comparison of the sample mean and Bayes-Stein estimators used data through 2026 and therefore the now-locked holdout; its figures are deliberately not reproduced here (see docs/HOLDOUT_EXPOSURE.md). The default remains `"sample"`; any new comparison must use the 2013-2019 protocol and be recorded in the registry.
 
 SLSQP first solves minimum variance and unrestricted maximum historical log growth. The upper frontier maximizes `mean(log(1 + r_p)) * 252` under volatility **ceilings**, spanning minimum risk to the maximum-growth endpoint. The growth objective has the same optimum as calendar CAGR because study duration is fixed. Each named target solves the same problem; a ceiling below minimum achievable volatility is reported as infeasible with missing weights. Above the maximum-growth risk, it reuses that optimum and reports unused risk allowance. Target risk is not an equality.
 
@@ -209,7 +240,7 @@ Maximum Sharpe uses arithmetic mean excess return and deterministic starts at eq
 
 The solver uses explicit gradients, scaled risk constraints and a documented fallback from `ftol=1e-10` to `1e-7`, with at most 1000 iterations each. Every attempted status, message, raw weight sum and raw minimum weight is recorded. Weight cleanup is limited to tolerated numerical errors, followed by actual risk-ceiling validation (tolerance `1e-7`). Failures raise exceptions. Frontier monotonicity and dominance over each single asset at its exact risk are checked, alongside covariance PSD, weighted-return risk and independently compounded CAGR. Numerical floors affect boundary solver evaluation only; reported wipeout CAGR is exact.
 
-This frontier maximizes realized growth in-sample and can be sensitive to the historical interval, vendor data and extreme returns. The default study does not include walk-forward validation, estimation uncertainty, out-of-sample selection, portfolio costs or future forecasts. These should be added before treating historical optimal weights as an investment process.
+This frontier maximizes realized growth in-sample and is sensitive to the historical interval, vendor data and extreme returns. The `CAGR` of a frontier point is a realized historical CAGR of a daily-rebalanced constant mix, not an expected CAGR; `Estimated return` is an arithmetic expected return. Out-of-sample evidence comes only from the walk-forward.
 
 ## Review evidence and regression
 
@@ -217,11 +248,9 @@ This frontier maximizes realized growth in-sample and can be sensitive to the hi
 
 `pytest` covers deterministic schema/calendar rejection, availability metadata, FX direction and independent FX moves, returns without filling, leverage wipeout and pre-alignment compounding, independent metric expected values, analytic minimum-risk weights, independent portfolio compounding/risk, infeasible targets, universe selection and Sharpe with negative excess returns. Regression tests extract and execute only the original notebook's pure leverage and performance functions on identical inputs: those calculations must agree. They do not execute the original network cells.
 
-After running the notebook, `.\.venv\Scripts\python.exe scripts/check_regression.py` also executes the archived optimization/target cells on exactly the same exported EUR prices. It validates the archived safeguards and compares portfolio metrics/weights with the new engine. `outputs/engine-regression.csv` records the differences; this comparison deliberately excludes source/FX changes.
+After running the analysis notebook, `.\.venv\Scripts\python.exe scripts/check_regression.py` also executes the archived optimization/target cells on exactly the same exported EUR prices, and re-runs the refactored engine with the archived assumptions (sample covariance, sample mean, no investor bounds, all assets eligible) instead of comparing against the research configuration. It validates the archived safeguards and compares portfolio metrics/weights with the new engine. `outputs/engine-regression.csv` records the differences; this comparison deliberately excludes source/FX changes.
 
-The CAC 40 uses **`PX1GR.PA`**, Yahoo's actual CAC 40 Gross Return Index in EUR, with gross dividends already reinvested in the index level. Its available raw history starts on 1987-12-31. It is classified as `Gross Return`, so the provider requests `auto_adjust=False`: no dividend adjustment or FX conversion is added. There is no ETF-inception filter. The actual raw counts and end dates are measured at execution; the exclusive end remains unchanged, so this run excludes the 2026-10-05 session.
-
-The live Yahoo source audit found **7,076 valid completed-session CAC closes ending on 2015-12-18**, followed by missing closes and an isolated 2026-10-05 quote when the current session is included. A first/last date and a nonmissing count alone can conceal that gap: `keepna=True` exposes 2,930 missing daily rows within the requested historical range. `outputs/cac-source-audit.log` records both bounded/unbounded requests and a recent-period request that returns no usable history. No prices are filled and no alternative series is silently substituted. Consequently, the executed common study is **2003-12-01 through 2015-12-18, 2,970 price observations**. EURUSD availability determines the common start; Gold has the latest raw asset start (2000-08-30), and CAC 40 determines the common end. This extends the beginning and observation count relative to the previous 2019-09-05 through 2026-10-02 study (1,763 observations), but loses its recent coverage. A complete updated CAC GR history requires a better source or corrected Yahoo data.
+The CAC 40 entry uses **`PX1GR.PA`**, Yahoo's CAC 40 Gross Return Index in EUR (gross dividends already in the level, so `auto_adjust=False`). A past source audit found that Yahoo's valid daily closes for this symbol stop on 2015-12-18, so any universe containing it is truncated there and cannot support the 2013-2019 walk-forward; the strict fold check fails explicitly in that case. It is not in the default universe.
 
 S&P 500 likewise uses a genuine gross-return benchmark, `^SP500TR`. QQQ and DIA remain explicit adjusted ETF proxies for the Nasdaq-100 and Dow Jones exposures; tested Yahoo `^XNDX` and `^DJITR` histories were unavailable. Those tested symbols do not establish that every Yahoo spelling or another provider lacks TR data. The current benchmark availability and provenance reports show the actual configured sources.
 

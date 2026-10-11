@@ -15,7 +15,7 @@ def test_daily_compounding(factor, dates):
 @pytest.mark.parametrize("factor", [1.5, 2., 4.])
 @pytest.mark.parametrize("extra_loss", [0., .1])
 def test_wipeout_is_absorbing(factor, extra_loss):
-    dates = pd.date_range("2020-01-01", periods=4)
+    dates = pd.date_range("2012-01-01", periods=4)
     loss = min(1 / factor + extra_loss, .99)
     result = build_daily_leveraged_series(pd.Series([100, 100 * (1 - loss), 100, 200], index=dates), factor)
     np.testing.assert_allclose(result, [100, 0, 0, 0], atol=1e-12)
@@ -29,7 +29,7 @@ def test_no_lookahead_and_sampling(dates):
 
 
 def test_fx_gap_does_not_skip_native_reset(config):
-    dates = pd.date_range("2020-01-01", periods=4)
+    dates = pd.date_range("2012-01-01", periods=4)
     native = {"A": pd.Series([100., 110., 99., 100.], index=dates)}
     # Mid-session FX is absent; the leveraged native path must still compound it.
     fx = pd.Series([2., 1., 1.], index=dates[[0, 2, 3]])

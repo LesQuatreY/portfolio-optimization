@@ -16,23 +16,6 @@ from portfolio_lab.plotting import plot_frontier
 from portfolio_lab.reporting import write_review_outputs
 
 
-def test_notebook_defaults_match_package_and_can_be_overridden():
-    path = Path(__file__).resolve().parents[1] / "notebooks/portfolio_analysis.ipynb"
-    notebook = json.loads(path.read_text(encoding="utf-8"))
-    cell = next(cell for cell in notebook["cells"] if cell.get("id") == "universe-config")
-    namespace = dict(configure_universe=configure_universe, load_config=load_config, project_dir=Path("."),
-                     replace=replace)
-    exec("".join(cell["source"]), namespace)
-    # The study end date is a notebook override; everything else must match the package defaults.
-    if namespace["study_end"]:
-        assert namespace["config"].end == namespace["study_end"]
-    assert replace(namespace["config"], end=load_config().end) == load_config()
-    assert namespace["config"].leverage == ()
-    del namespace["assets"]["Dow Jones"]
-    overridden = configure_universe(load_config(), namespace["assets"], namespace["leveraged_assets"])
-    assert "Dow Jones" not in [asset.name for asset in overridden.assets]
-
-
 def test_missing_leveraged_underlying_fails_before_download():
     assets = {asset.name: asset.symbol
               for asset in load_config().assets if asset.name != "Apple"}
@@ -210,15 +193,15 @@ def test_cac_index_is_not_dividend_adjusted(monkeypatch, tmp_path):
     asset = ASSET_CATALOGUE["PX1GR.PA"]
     assert asset.symbol == "PX1GR.PA" and asset.return_type == "Gross Return"
     provider = YahooProvider(tmp_path)
-    result = provider.history(asset, "2026-10-05")
+    result = provider.history(asset, "2019-10-05")
     assert requested["auto_adjust"] is False
     assert result.iloc[0] == 1000
     # A reload must use the same unadjusted, integrity-checked snapshot.
-    pd.testing.assert_series_equal(provider.history(asset, "2026-10-05"), result, check_freq=False)
+    pd.testing.assert_series_equal(provider.history(asset, "2019-10-05"), result, check_freq=False)
 
 
 def test_coverage_identifies_fx_as_start_limit(config):
-    dates = pd.date_range("2020-01-01", periods=5)
+    dates = pd.date_range("2012-01-01", periods=5)
 
     class Provider:
         name = "fixture"
@@ -228,13 +211,13 @@ def test_coverage_identifies_fx_as_start_limit(config):
             return pd.Series(2. if asset.name == "EURUSD" else 100., index=index, name=asset.name)
 
     coverage = study_coverage(load_market_data(config, Provider()), config)
-    assert coverage["common_start"] == "2020-01-03"
+    assert coverage["common_start"] == "2012-01-03"
     assert coverage["start_limiting_series"] == ["DEXUSEU"]
     assert coverage["eur_start_limiting_assets"] == ["A"]
 
 
 def test_missing_tail_does_not_extend_common_period(config):
-    dates = pd.date_range("2020-01-01", periods=6)
+    dates = pd.date_range("2012-01-01", periods=6)
 
     class Provider:
         name = "fixture"

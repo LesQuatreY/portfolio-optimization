@@ -29,7 +29,7 @@ def test_catalogue_resolves_msci_world():
 def test_normalization_parses_sorts_and_deduplicates():
     frame = msci_frame(["2001-01-02", "2000-12-29", "2001-01-02", "2001-01-03"],
                        ["101.5", 100, 101.5, 102.25])
-    result = normalize_msci_levels(frame, MSCI_WORLD, "2026-10-07")
+    result = normalize_msci_levels(frame, MSCI_WORLD, "2019-10-07")
     assert result.name == "MSCI World"
     assert isinstance(result.index, pd.DatetimeIndex) and result.index.tz is None
     assert list(result.index) == list(pd.to_datetime(["2000-12-29", "2001-01-02", "2001-01-03"]))
@@ -40,16 +40,16 @@ def test_normalization_parses_sorts_and_deduplicates():
 
 
 def test_normalization_respects_exclusive_end():
-    frame = msci_frame(["2026-10-05", "2026-10-06", "2026-10-07"], [1., 2., 3.])
-    result = normalize_msci_levels(frame, MSCI_WORLD, "2026-10-07")
-    assert result.index[-1] == pd.Timestamp("2026-10-06")
+    frame = msci_frame(["2019-10-05", "2019-10-06", "2019-10-07"], [1., 2., 3.])
+    result = normalize_msci_levels(frame, MSCI_WORLD, "2019-10-07")
+    assert result.index[-1] == pd.Timestamp("2019-10-06")
 
 
 @pytest.mark.parametrize("frame", [None, msci_frame([], []),
-                                   msci_frame(["2026-10-08"], [1.])])
+                                   msci_frame(["2019-10-08"], [1.])])
 def test_no_data_fails_loudly(frame):
     with pytest.raises(RuntimeError, match="No MSCI history.*no substitute"):
-        normalize_msci_levels(frame, MSCI_WORLD, "2026-10-07")
+        normalize_msci_levels(frame, MSCI_WORLD, "2019-10-07")
 
 
 @pytest.mark.parametrize("frame,match", [
@@ -64,13 +64,13 @@ def test_no_data_fails_loudly(frame):
 ])
 def test_malformed_data_rejected(frame, match):
     with pytest.raises(ValueError, match=match):
-        normalize_msci_levels(frame, MSCI_WORLD, "2026-10-07")
+        normalize_msci_levels(frame, MSCI_WORLD, "2019-10-07")
 
 
 def test_symbol_and_return_type_must_agree():
     with pytest.raises(ValueError, match="variant NETR"):
         normalize_msci_levels(msci_frame(["2001-01-02"], [1.]),
-                              replace(MSCI_WORLD, return_type="Price Return"), "2026-10-07")
+                              replace(MSCI_WORLD, return_type="Price Return"), "2019-10-07")
 
 
 def test_provider_requests_netr_with_inclusive_end_and_reuses_snapshot(tmp_path):
@@ -81,16 +81,16 @@ def test_provider_requests_netr_with_inclusive_end_and_reuses_snapshot(tmp_path)
         return msci_frame(["2000-12-29", "2001-01-02"], [3000., 3010.])
 
     provider = MSCIProvider(tmp_path, get_levels=get_levels)
-    first = provider.history(MSCI_WORLD, "2026-10-07")
-    assert calls == [("990100", "2000-01-01", "2026-10-06", "NETR")]
+    first = provider.history(MSCI_WORLD, "2019-10-07")
+    assert calls == [("990100", "2000-01-01", "2019-10-06", "NETR")]
     assert first.first_valid_index() == pd.Timestamp("2000-12-29")
-    second = provider.history(MSCI_WORLD, "2026-10-07")
+    second = provider.history(MSCI_WORLD, "2019-10-07")
     assert len(calls) == 1
     pd.testing.assert_series_equal(second, first, check_freq=False)
 
 
 def test_mixed_providers_route_per_asset_and_msci_enters_fx_path(config, tmp_path):
-    dates = pd.date_range("2020-01-01", periods=4)
+    dates = pd.date_range("2012-01-01", periods=4)
     calls = []
 
     class Yahoo:
@@ -130,7 +130,7 @@ def test_mixed_providers_route_per_asset_and_msci_enters_fx_path(config, tmp_pat
 
 def test_default_loading_routes_by_catalogue_without_notebook_provider_choice(config, monkeypatch, tmp_path):
     import portfolio_lab.data as data_module
-    dates = pd.date_range("2020-01-01", periods=3)
+    dates = pd.date_range("2012-01-01", periods=3)
     built, calls = [], []
 
     def fake(label):

@@ -8,7 +8,7 @@ from portfolio_lab.metrics import compute_asset_metrics
 from portfolio_lab.optimization import PortfolioOptimizer
 from portfolio_lab.returns import simple_returns
 from portfolio_lab.robustness import (
-    EQUAL_WEIGHT, OPTIMIZED, calendar_year_returns, concentration, growth_metrics, hhi,
+    CONSTRAINED_EQUAL_WEIGHT, EQUAL_WEIGHT, OPTIMIZED, calendar_year_returns, concentration, growth_metrics, hhi,
     relative_annual_performance, subperiod_stability, turnover,
     walk_forward, walk_forward_folds, weight_stability, window_prices)
 
@@ -39,13 +39,13 @@ def run(prices, cfg, **kwargs):
 
 
 def test_ten_year_folds_follow_actual_history():
-    index = pd.bdate_range("2000-12-29", "2026-10-02")
+    index = pd.bdate_range("1990-12-31", "2019-10-02")
     folds = walk_forward_folds(index, 10)
-    assert [f.test_year for f in folds] == list(range(2011, 2027))
+    assert [f.test_year for f in folds] == list(range(2001, 2020))
     first = folds[0]
     assert (first.return_base, first.train_start, first.train_end) == (
-        pd.Timestamp("2000-12-29"), pd.Timestamp("2001-01-01"), pd.Timestamp("2010-12-31"))
-    assert (first.test_start, first.test_end) == (pd.Timestamp("2011-01-03"), pd.Timestamp("2011-12-30"))
+        pd.Timestamp("1990-12-31"), pd.Timestamp("1991-01-01"), pd.Timestamp("2000-12-29"))
+    assert (first.test_start, first.test_end) == (pd.Timestamp("2001-01-01"), pd.Timestamp("2001-12-31"))
     for previous, fold in zip(folds, folds[1:]):
         # The 10-year window rolls forward by exactly one calendar year.
         assert fold.train_start.year == previous.train_start.year + 1
@@ -64,11 +64,11 @@ def test_folds_need_a_full_training_window():
 
 
 def test_partial_final_year_is_flagged_and_optional():
-    index = pd.bdate_range("2000-12-29", "2026-10-02")
+    index = pd.bdate_range("1990-12-31", "2019-10-02")
     last = walk_forward_folds(index, 10)[-1]
-    assert (last.test_year, last.test_end, last.complete_test_year) == (2026, pd.Timestamp("2026-10-02"), False)
+    assert (last.test_year, last.test_end, last.complete_test_year) == (2019, pd.Timestamp("2019-10-02"), False)
     assert all(f.complete_test_year for f in walk_forward_folds(index, 10)[:-1])
-    assert walk_forward_folds(index, 10, include_partial_final_year=False)[-1].test_year == 2025
+    assert walk_forward_folds(index, 10, include_partial_final_year=False)[-1].test_year == 2018
 
 
 def test_oos_series_contains_only_chronological_test_returns(short_prices, cfg):
@@ -132,13 +132,16 @@ def test_oos_metrics_reuse_engine_conventions(short_prices, cfg):
     expected = compute_asset_metrics(result.nav, cfg.trading_days, cfg.risk_free_rate,
                                      cfg.calendar_days_per_year).loc[result.metrics.index]
     pd.testing.assert_frame_equal(result.metrics, expected)
-    assert list(result.metrics.index) == ["Maximum Sharpe", "Minimum Volatility", EQUAL_WEIGHT, "W"]
+    assert list(result.metrics.index) == ["Maximum Sharpe", "Minimum Volatility", CONSTRAINED_EQUAL_WEIGHT,
+                                          EQUAL_WEIGHT, "W"]
     pd.testing.assert_frame_equal(growth_metrics(result.oos_returns, result.nav.index[0], cfg), result.metrics)
 
 
 def test_missing_benchmark_is_explicit(short_prices, cfg):
     with pytest.raises(ValueError, match="Benchmark 'MSCI World'"):
-        walk_forward(short_prices, cfg, train_years=2)
+        walk_forward(short_prices, cfg, train_years=2, benchmark="MSCI World")
+    # Without an explicit benchmark the configured one (none here) is used.
+    assert walk_forward(short_prices, cfg, train_years=2).benchmark is None
 
 
 def test_turnover_definition():
@@ -240,9 +243,9 @@ def test_incomplete_final_year_is_kept_and_labelled():
 def test_walk_forward_annual_comparison_reuses_oos_returns(short_prices, cfg):
     result = run(short_prices, cfg)
     comparison = result.annual_comparison()
-    assert list(comparison.annual_returns) == ["Maximum Sharpe", EQUAL_WEIGHT, "W"]
-    pd.testing.assert_frame_equal(comparison.annual_returns,
-                                  calendar_year_returns(result.oos_returns[["Maximum Sharpe", EQUAL_WEIGHT, "W"]]))
+    columns = ["Maximum Sharpe", CONSTRAINED_EQUAL_WEIGHT, EQUAL_WEIGHT, "W"]
+    assert list(comparison.annual_returns) == columns
+    pd.testing.assert_frame_equal(comparison.annual_returns, calendar_year_returns(result.oos_returns[columns]))
     # Data end on 2015-06-30: the last test year is incomplete but still compared.
     assert comparison.year_labels() == ["2012", "2013", "2014", "2015 YTD"]
     # Compounding the annual returns reproduces the whole OOS growth.

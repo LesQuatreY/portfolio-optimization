@@ -24,7 +24,7 @@ def original_functions():
 
 def test_refactor_regression_on_unchanged_inputs():
     old = original_functions()
-    dates = pd.date_range("2020-01-01", periods=5)
+    dates = pd.date_range("2012-01-01", periods=5)
     prices = pd.DataFrame({"A": [100., 110., 99., 130., 120.], "B": [100., 90., 95., 110., 115.]}, index=dates)
     for leverage in (1.3, 1.5, 2., 3., 4.):
         pd.testing.assert_series_equal(build_daily_leveraged_series(prices["A"], leverage),
@@ -34,6 +34,6 @@ def test_refactor_regression_on_unchanged_inputs():
 
 def test_original_wipeout_regression():
     old = original_functions()
-    dates = pd.date_range("2020-01-01", periods=4)
+    dates = pd.date_range("2012-01-01", periods=4)
     prices = pd.DataFrame({"A": [100., 0., 0., 0.]}, index=dates)
     pd.testing.assert_frame_equal(compute_asset_metrics(prices), old["compute_performance"](prices))

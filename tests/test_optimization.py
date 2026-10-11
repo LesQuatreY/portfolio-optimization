@@ -74,7 +74,7 @@ def test_covariance_cancellation_near_perfect_hedge(config):
     shocks = np.array([-.02, .012, -.015, .024, .008, -.005, .015, -.01] * 8)
     returns = np.column_stack([.001 + shocks, .0006 - .5 * shocks])
     prices = pd.DataFrame(np.vstack([np.ones(2), np.cumprod(1 + returns, axis=0)]),
-                          index=pd.date_range("2020-01-01", periods=65), columns=["A", "B"])
+                          index=pd.date_range("2012-01-01", periods=65), columns=["A", "B"])
     optimizer = PortfolioOptimizer(prices, config)
     metrics = optimizer.metrics(np.array([1/3, 2/3]))
     assert metrics["Volatility"] < 1e-12
