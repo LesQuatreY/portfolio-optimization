@@ -85,7 +85,11 @@ def record_experiment(result, research, *, label: str, notes: str = "", project_
     project_dir = Path(research.config.output_dir).parent if project_dir is None else Path(project_dir)
     registry = project_dir / DEFAULT_REGISTRY if registry is None else Path(registry)
     snapshot = research.snapshot()
-    # What was actually evaluated (may differ from the file: universe variants, robustness checks).
+    # What was actually evaluated (may differ from the file: universe variants, methods, checks).
+    if getattr(result, "config", None) is not None:
+        evaluated = asdict(result.config)
+        evaluated.pop("cache_dir"), evaluated.pop("output_dir")
+        snapshot["config"] = json.loads(json.dumps(evaluated, default=str))
     snapshot["evaluated_universe"] = list(result.universe)
     snapshot["policies"] = list(result.strategies)
     snapshot["benchmark"] = result.benchmark
@@ -96,8 +100,10 @@ def record_experiment(result, research, *, label: str, notes: str = "", project_
     metrics = _metrics(result)
     # Same evaluation = same result-determining inputs (engine config, evaluated universe, policies,
     # benchmark, walk-forward settings), whatever the label, the variant list or the provenance text.
-    same = [entry for entry in load_entries(registry) if entry.get("kind") != "plan"
-            and evaluation_fingerprint(entry["snapshot"]) == evaluation]
+    history = [entry for entry in load_entries(registry) if entry.get("kind") not in NOTE_KINDS]
+    same = [entry for entry in history if evaluation_fingerprint(entry["snapshot"]) == evaluation]
+    seen = {fp for entry in history for fp in strategy_fingerprints(entry["snapshot"]).values()}
+    new_strategies = [name for name, fp in strategy_fingerprints(snapshot).items() if fp not in seen]
     previous = [entry for entry in same if entry.get("code") == version]
     superseded = [entry for entry in same if entry.get("code") != version]
     entry = {
@@ -111,6 +117,8 @@ def record_experiment(result, research, *, label: str, notes: str = "", project_
         # True when this configuration had already been evaluated (any code version): its validation
         # result is then previously exposed evidence, not a new look.
         "previously_evaluated": bool(same),
+        # Strategies never evaluated before under identical result-determining inputs.
+        "new_strategies": new_strategies,
         "validation_years": [f.test_year for f in result.folds],
         "snapshot": snapshot, "metrics": metrics,
     }
@@ -121,12 +129,53 @@ def record_experiment(result, research, *, label: str, notes: str = "", project_
 
 
 RESULT_KEYS = ("config", "evaluated_universe", "policies", "benchmark", "walk_forward_used")
+_LEVERAGE_KEYS = ("leverage_annual_fee", "leverage_financing_rate", "leverage_financing_spread", "financing_series")
+# Fields added after some registry entries were written, with the value equivalent to their absence.
+_LEGACY_DEFAULTS = {"growth_drift": "sample", "min_weights": [], "holding_costs": [], "risk_free_series": None,
+                    "financing_series": [], "leverage_financing_spread": 0.}
+
+
+def _result_inputs(snapshot: dict) -> dict:
+    """Normalized inputs that determine a walk-forward result, comparable across registry versions.
+
+    Eligibility and leverage are carried by the evaluated universe (labels include the factor), so
+    the research-level `eligible`/`leverage` fields are dropped; leverage costs only matter when a
+    leveraged label is evaluated; investor bounds and holding costs only for evaluated names; the
+    walk-forward settings actually used replace the configured ones.
+    """
+    config = dict(snapshot.get("config") or {})
+    universe = list(snapshot.get("evaluated_universe") or [])
+    benchmark = snapshot.get("benchmark")
+    for key in ("eligible", "leverage", "walk_forward", "cache_dir", "output_dir"):
+        config.pop(key, None)
+    for key, default in _LEGACY_DEFAULTS.items():
+        if key in config and config[key] == default:
+            config.pop(key)
+    if not any(" x" in name for name in universe):
+        for key in _LEVERAGE_KEYS:
+            config.pop(key, None)
+    for key in ("max_weights", "min_weights"):
+        config[key] = [entry for entry in config.get(key) or [] if entry[0] in universe]
+    config["holding_costs"] = [entry for entry in config.get("holding_costs") or []
+                               if entry[0] in set(universe) | {benchmark}]
+    return {"config": config, "evaluated_universe": universe, "benchmark": benchmark,
+            "walk_forward_used": snapshot.get("walk_forward_used")}
+
+
+def _hash(value) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()[:12]
 
 
 def evaluation_fingerprint(snapshot: dict) -> str:
     """Hash of the inputs that determine a walk-forward result (recomputable for old entries)."""
-    core = {key: snapshot.get(key) for key in RESULT_KEYS}
-    return hashlib.sha256(json.dumps(core, sort_keys=True, default=str).encode()).hexdigest()[:12]
+    return _hash({**_result_inputs(snapshot), "policies": snapshot.get("policies")})
+
+
+def strategy_fingerprints(snapshot: dict) -> dict[str, str]:
+    """One fingerprint per evaluated strategy: a strategy's result does not depend on the others."""
+    inputs = _result_inputs(snapshot)
+    names = list(snapshot.get("policies") or []) + ([inputs["benchmark"]] if inputs["benchmark"] else [])
+    return {name: _hash({**inputs, "strategy": name}) for name in names}
 
 
 def load_entries(registry: Path) -> list[dict]:
@@ -136,12 +185,30 @@ def load_entries(registry: Path) -> list[dict]:
     return [json.loads(line) for line in registry.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-def registry_summary(registry: Path) -> pd.DataFrame:
-    """One row per recorded evaluation (French column labels for notebook display)."""
-    rows = []
+def exposure_history(registry: Path) -> dict[str, dict]:
+    """Recompute, in log order, whether each result entry repeated an earlier evaluation and which of its
+    strategies were new. Uses the current fingerprint rules (stored flags reflect the rules of their time)."""
+    seen_runs, seen_strategies, out = set(), set(), {}
     for entry in load_entries(registry):
-        if entry.get("kind") == "plan":
-            rows.append({"Identifiant": entry["id"], "Libellé": entry["label"], "Type": "plan",
+        if entry.get("kind") in NOTE_KINDS:
+            continue
+        run = evaluation_fingerprint(entry["snapshot"])
+        strategies = strategy_fingerprints(entry["snapshot"])
+        out[entry["id"] + "|" + entry["label"]] = {
+            "previously_evaluated": run in seen_runs,
+            "new_strategies": [name for name, fp in strategies.items() if fp not in seen_strategies]}
+        seen_runs.add(run)
+        seen_strategies.update(strategies.values())
+    return out
+
+
+def registry_summary(registry: Path) -> pd.DataFrame:
+    """One row per recorded evaluation (French labels); exposure flags recomputed chronologically."""
+    rows = []
+    exposure = exposure_history(registry)
+    for entry in load_entries(registry):
+        if entry.get("kind") in NOTE_KINDS:
+            rows.append({"Identifiant": entry["id"], "Libellé": entry["label"], "Type": entry["kind"],
                          "Catégorie": entry.get("category"), "Configuration": "—",
                          "Commit": (entry.get("code") or {}).get("commit"), "Relance de": "—", "Remplace": "—",
                          "Univers évalué": "—"})
@@ -150,15 +217,44 @@ def registry_summary(registry: Path) -> pd.DataFrame:
                      "Catégorie": entry.get("category", "non renseignée"),
                      "Configuration": entry["configuration"], "Commit": (entry.get("code") or {}).get("commit"),
                      "Relance de": entry.get("rerun_of") or "—", "Remplace": entry.get("supersedes") or "—",
-                     "Déjà évaluée": "oui" if entry.get("previously_evaluated") else "non",
+                     "Déjà évaluée": "oui" if exposure[entry["id"] + "|" + entry["label"]]["previously_evaluated"]
+                     else "non",
+                     "Nouvelles stratégies": ", ".join(exposure[entry["id"] + "|" + entry["label"]]["new_strategies"])
+                     or "—",
                      "Univers évalué": ", ".join(entry["snapshot"].get("evaluated_universe", []))})
     return pd.DataFrame(rows)
 
 
+NOTE_KINDS = ("plan", "decision")
+
+
 def distinct_configurations(registry: Path, kind: str | None = None) -> int:
-    """Distinct evaluated configurations (plans, which carry no result, are not counted)."""
+    """Distinct evaluated configurations (plans and decisions, which carry no result, are not counted)."""
     return len({evaluation_fingerprint(e["snapshot"]) for e in load_entries(registry)
-                if e.get("kind") != "plan" and (kind is None or e["kind"] == kind)})
+                if e.get("kind") not in NOTE_KINDS and (kind is None or e["kind"] == kind)})
+
+
+def distinct_strategy_evaluations(registry: Path) -> int:
+    """Distinct (strategy, inputs) pairs evaluated on the validation years: the number of looks."""
+    return len({fp for e in load_entries(registry) if e.get("kind") not in NOTE_KINDS
+                for fp in strategy_fingerprints(e["snapshot"]).values()})
+
+
+def register_decision(registry: Path, *, label: str, rationale: str, informed_by_validation: bool,
+                      project_dir: Path | None = None) -> dict:
+    """Record a research or investor decision (no result), stating whether validation results informed it."""
+    if not rationale.strip():
+        raise ValueError("A decision needs its rationale.")
+    registry = Path(registry)
+    project_dir = registry.parent.parent if project_dir is None else Path(project_dir)
+    now = f"{pd.Timestamp.now(tz='UTC'):%Y%m%dT%H%M%SZ}"
+    entry = {"id": f"{now}-decision", "timestamp_utc": now, "kind": "decision", "category": "decision",
+             "label": label, "rationale": rationale, "informed_by_validation": bool(informed_by_validation),
+             "code": code_version(project_dir), "configuration": None}
+    registry.parent.mkdir(parents=True, exist_ok=True)
+    with registry.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
+    return entry
 
 
 def register_plan(registry: Path, *, label: str, hypothesis: str, questions: list[str], document: str = "",

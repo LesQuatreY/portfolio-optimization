@@ -38,6 +38,7 @@ LABELS = {
     "Maximum Sharpe": "Sharpe maximal", "Minimum Volatility": "Volatilité minimale",
     "Maximum CAGR": "CAGR maximal", "Equal Weight": "Équipondéré non contraint (descriptif)",
     "Constrained Equal Weight": "Équipondéré contraint (investissable)",
+    "Equal Risk Contribution": "Contribution au risque égale (ERC)",
     "CAGR": "CAGR", "Volatility annualized": "Volatilité annualisée", "Volatility": "Volatilité annualisée",
     "Estimated volatility": "Volatilité estimée (ex ante)", "Sharpe": "Ratio de Sharpe",
     "Max Drawdown": "Perte maximale (drawdown)", "Calmar": "Ratio de Calmar",
@@ -89,8 +90,13 @@ def _line_style(name: str, benchmark: str | None, color: str) -> dict:
 
 
 def frontier_chart(stats: pd.DataFrame, optimization, *, investor=None, band: pd.DataFrame | None = None,
-                   period: str = "", asset_order: Sequence[str] | None = None) -> go.Figure:
-    """In-sample frontier: maximum historical growth for each estimated-volatility ceiling."""
+                   period: str = "", asset_order: Sequence[str] | None = None,
+                   extra_frontiers: dict | None = None, extra_points: dict | None = None) -> go.Figure:
+    """In-sample frontier: maximum historical growth for each estimated-volatility ceiling.
+
+    `extra_frontiers` {label: OptimizationResults} overlays other estimation methods (dashed);
+    `extra_points` {label: metrics dict} adds single portfolios (e.g. equal risk contribution).
+    """
     fig = go.Figure()
     if band is not None and len(band):
         level = band["Level"].iloc[0]
@@ -121,6 +127,19 @@ def frontier_chart(stats: pd.DataFrame, optimization, *, investor=None, band: pd
             marker=dict(size=13, symbol="diamond", color="white", line=dict(color=TEXT, width=2)),
             hovertemplate=(f"<b>{fr(name)}</b><br>Volatilité %{{x:.1%}}<br>CAGR %{{y:.1%}}<br>"
                            f"Perte max {point['Max Drawdown']:.1%}<br>{mix}<extra></extra>")))
+    for i, (label, other) in enumerate((extra_frontiers or {}).items()):
+        curve_other = other.frontier.drop_duplicates(subset=["Volatility", "CAGR"])
+        fig.add_trace(go.Scatter(x=curve_other["Volatility"], y=curve_other["CAGR"], mode="lines", name=label,
+                                 line=dict(color=PALETTE[(i + 6) % len(PALETTE)], width=2, dash="dash"),
+                                 hovertemplate=f"<b>{label}</b><br>Volatilité %{{x:.1%}}<br>CAGR %{{y:.1%}}<extra></extra>"))
+    for i, (label, point) in enumerate((extra_points or {}).items()):
+        top = point["weights"].sort_values(ascending=False)
+        mix = "<br>".join(f"{fr(a)} {w:.0%}" for a, w in top.items() if w >= .01)
+        fig.add_trace(go.Scatter(x=[point["Volatility"]], y=[point["CAGR"]], mode="markers", name=label,
+                                 marker=dict(size=13, symbol="star", color=PALETTE[(i + 5) % len(PALETTE)],
+                                             line=dict(color="white", width=1)),
+                                 hovertemplate=(f"<b>{label}</b><br>Volatilité %{{x:.1%}}<br>CAGR %{{y:.1%}}<br>"
+                                                f"{mix}<extra></extra>")))
     if investor is not None:
         reference = investor.unconstrained.frontier.drop_duplicates(subset=["Volatility", "CAGR"])
         fig.add_trace(go.Scatter(x=reference["Volatility"], y=reference["CAGR"], mode="lines",

@@ -95,6 +95,10 @@ class Config:
     # Maximum Sharpe expected returns: "sample" (arithmetic mean; reference default) or "bayes_stein"
     # (Jorion 1986 shrinkage; pre-specified OOS experiment documented in README).
     expected_return_method: str = "sample"
+    # Drift used by the growth objective (Maximum CAGR, frontier, risk profiles): "sample" = the raw
+    # historical returns (reference); "estimated" = training returns re-centred on the configured
+    # expected returns (e.g. Bayes-Stein), r~_t = r_t - mean(r) + mu, leaving risk and path shape unchanged.
+    growth_drift: str = "sample"
     trading_days: int = 252
     calendar_days_per_year: float = 365.25
     risk_free_rate: float = 0.
@@ -141,6 +145,8 @@ class Config:
             raise ValueError("FX must come from a supported provider ('fred' or 'yahoo') with a series id.")
         validate_covariance_method(self.covariance_method)
         validate_expected_return_method(self.expected_return_method)
+        if self.growth_drift not in ("sample", "estimated"):
+            raise ValueError("growth_drift must be 'sample' or 'estimated'.")
         if self.base_currency != "EUR":
             raise ValueError("This study supports EUR as base currency.")
         if not isinstance(self.include_leveraged_in_frontier, bool):

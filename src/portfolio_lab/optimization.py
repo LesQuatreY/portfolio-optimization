@@ -73,6 +73,11 @@ class PortfolioOptimizer:
         self.realized_mean = self.R.mean(axis=0) * config.trading_days
         self.expected = estimate_expected_returns(self.returns, config.expected_return_method, config.trading_days)
         self.mu = self.expected.values.to_numpy()
+        # Returns seen by the growth objective. Realized metrics always use the actual returns.
+        if config.growth_drift == "estimated":
+            self.R_objective = self.R - self.R.mean(axis=0) + self.mu / config.trading_days
+        else:
+            self.R_objective = self.R
         self.n = prices.shape[1]
         # Optional investor bounds (policy, not model); [0, 1] = only the long-only bounds.
         # Limits on assets excluded by eligibility are moot and ignored; any other mismatch fails.
@@ -110,13 +115,13 @@ class PortfolioOptimizer:
         return float(w @ self.sigma @ w)
 
     def growth_objective(self, w):
-        factors = np.maximum(1 + self.R @ w, np.finfo(float).tiny)
+        factors = np.maximum(1 + self.R_objective @ w, np.finfo(float).tiny)
         return -float(np.log(factors).mean()) * self.config.trading_days
 
     def growth_gradient(self, w):
         # Cap only numerical boundary evaluations, never reported NAV/CAGR.
-        factors = np.maximum(1 + self.R @ w, 1e-15)
-        return -(self.R.T @ (1 / factors)) * self.config.trading_days / len(self.R)
+        factors = np.maximum(1 + self.R_objective @ w, 1e-15)
+        return -(self.R_objective.T @ (1 / factors)) * self.config.trading_days / len(self.R)
 
     def sharpe_objective(self, w):
         vol = np.sqrt(max(self.variance(w), 1e-24))
@@ -231,6 +236,51 @@ class PortfolioOptimizer:
                       for i, point in enumerate(starts)]
         sharpe = min(candidates, key=lambda p: self.sharpe_objective(p["weights"].to_numpy()))
         return {"Minimum Volatility": minimum, "Maximum CAGR": maximum, "Maximum Sharpe": sharpe}
+
+    def equal_risk_contribution(self) -> dict:
+        """Equal risk contribution portfolio from the risk-model covariance, under the investor bounds.
+
+        Without binding bounds: the unique long-only ERC portfolio (Spinu 2013 convex problem
+        min 1/2 y'Sigma y - sum(log y_i) / n, then w = y / sum(y)), where every asset contributes
+        w_i (Sigma w)_i = w'Sigma w / n. With binding bounds exact ERC is infeasible: the portfolio
+        minimizes sum_i (w_i (Sigma w)_i / w'Sigma w - 1/n)^2 within the bounds, starting from the
+        projected unconstrained solution. Deterministic; uses no expected return.
+        """
+        from scipy.optimize import minimize as _minimize
+        sigma = self.sigma / self.variance_scale
+        budget = np.full(self.n, 1 / self.n)
+        result = _minimize(lambda y: .5 * y @ sigma @ y - budget @ np.log(y), np.full(self.n, 1.),
+                           jac=lambda y: sigma @ y - budget / y, method="L-BFGS-B",
+                           bounds=[(1e-10, None)] * self.n, options={"ftol": 1e-15, "gtol": 1e-12, "maxiter": 5000})
+        if not result.success:
+            raise RuntimeError(f"Equal risk contribution failed: {result.message}")
+        w = result.x / result.x.sum()
+        self.log.append({"Portfolio": "Equal Risk Contribution (unconstrained)", "Success": True, "Status": 0,
+                         "Message": str(result.message), "Iterations": result.nit, "ftol": 1e-15,
+                         "Raw minimum weight": float(w.min()), "Raw weight sum": float(w.sum())})
+        if (w <= self.upper + 1e-12).all() and (w >= self.lower - 1e-12).all():
+            return {**self.metrics(np.clip(w, self.lower, self.upper) / np.clip(w, self.lower, self.upper).sum(),
+                                   "Exact equal risk contribution"), "Bounds binding": False}
+
+        def shares_of(v):
+            marginal = sigma @ v
+            total = max(float(v @ marginal), 1e-18)
+            return v * marginal / total, marginal, total
+
+        def deviation(v):
+            shares, _, _ = shares_of(v)
+            return float(((shares - budget) ** 2).sum())
+
+        def deviation_gradient(v):
+            # d s_i / d v_j = (delta_ij m_i + v_i Sigma_ij) / V - 2 s_i m_j / V, with m = Sigma v, V = v' m.
+            shares, marginal, total = shares_of(v)
+            jacobian = (np.diag(marginal) + v[:, None] * sigma) / total - 2 * np.outer(shares, marginal) / total
+            return 2 * jacobian.T @ (shares - budget)
+
+        start = self.cap_and_normalize(w)
+        bounded = self.solve(deviation, deviation_gradient, start, "Equal Risk Contribution (bounded)")
+        return {**bounded, "Status": "Closest to equal risk contributions within investor bounds",
+                "Bounds binding": True}
 
     def objective_sharpe(self, w) -> float:
         """The Maximum Sharpe objective value (model expected return over estimated volatility)."""

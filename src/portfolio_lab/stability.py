@@ -149,11 +149,11 @@ class WeightSensitivity:
 
 
 def _refit_chunk(train, config, risk_profiles, policies, rows):
-    from .robustness import fit_policies
+    from .robustness import EQUAL_RISK, fit_policies
     out = []
     for row in rows:
         try:
-            weights, _ = fit_policies(resampled_prices(train, row), config, risk_profiles)
+            weights, _ = fit_policies(resampled_prices(train, row), config, risk_profiles, EQUAL_RISK in policies)
             out.append({p: weights[p].to_numpy() for p in policies})
         except (RuntimeError, ValueError):
             out.append(None)

@@ -74,8 +74,11 @@ def optimize_weights(train_prices: pd.DataFrame, config: Config,
     return weights, metrics
 
 
-def fit_policies(train_prices: pd.DataFrame, config: Config, risk_profiles: bool = False
-                 ) -> tuple[dict[str, pd.Series], pd.DataFrame]:
+EQUAL_RISK = "Equal Risk Contribution"
+
+
+def fit_policies(train_prices: pd.DataFrame, config: Config, risk_profiles: bool = False,
+                 risk_parity: bool = False) -> tuple[dict[str, pd.Series], pd.DataFrame]:
     """Every evaluated policy fitted on training prices only.
 
     Risk profiles maximize historical log growth under their estimated-volatility ceiling
@@ -86,15 +89,25 @@ def fit_policies(train_prices: pd.DataFrame, config: Config, risk_profiles: bool
     core = optimizer.core_portfolios()
     fitted = {name: core[name] for name in OPTIMIZED}
     fallback = {name: False for name in OPTIMIZED}
+    unused = {name: False for name in OPTIMIZED}
+    minimum, maximum = core["Minimum Volatility"], core["Maximum CAGR"]
     if risk_profiles:
-        minimum, maximum = core["Minimum Volatility"], core["Maximum CAGR"]
         for name, ceiling in config.targets:
             point = optimizer.target(ceiling, minimum, maximum, name)
             fallback[name] = point["weights"] is None
+            # Ceiling above the maximum-growth portfolio's risk: the profile IS Maximum CAGR (not binding).
+            unused[name] = (not fallback[name]) and ceiling >= maximum["Estimated volatility"]
             fitted[name] = minimum if fallback[name] else point
+    if risk_parity:
+        fitted[EQUAL_RISK] = optimizer.equal_risk_contribution()
+        fallback[EQUAL_RISK] = unused[EQUAL_RISK] = False
     keys = ("CAGR", "Volatility", "Estimated volatility", "Sharpe", "Max Drawdown")
     metrics = pd.DataFrame({name: {k: p[k] for k in keys} for name, p in fitted.items()}).T
     metrics["Fallback to Minimum Volatility"] = pd.Series(fallback)
+    metrics["Ceiling not binding (Maximum CAGR)"] = pd.Series(unused)
+    # Feasible estimated-risk range of the training window (same for every row).
+    metrics["Feasible minimum volatility"] = minimum["Estimated volatility"]
+    metrics["Maximum-growth volatility"] = maximum["Estimated volatility"]
     for column, shrinkage in (("Covariance shrinkage", optimizer.estimate.shrinkage),
                               ("Expected-return shrinkage", optimizer.expected.shrinkage)):
         metrics[column] = np.nan if shrinkage is None else shrinkage
@@ -287,6 +300,8 @@ class WalkForwardResult:
     strategies: tuple[str, ...] = (*OPTIMIZED, CONSTRAINED_EQUAL_WEIGHT, EQUAL_WEIGHT)
     benchmark: str | None = None
     universe: tuple[str, ...] = ()
+    # The exact configuration evaluated (variant, method or check), for the experiment registry.
+    config: Config | None = None
 
     @property
     def fold_table(self) -> pd.DataFrame:
@@ -401,7 +416,7 @@ def relative_annual_performance(returns: pd.DataFrame, strategy: str, benchmarks
 def walk_forward(prices: pd.DataFrame, config: Config, *, train_years: int | None = None,
                  benchmark=_FROM_CONFIG, include_partial_final_year: bool | None = None,
                  zero_tolerance: float = ZERO_TOLERANCE, settings: WalkForwardSettings | None = None,
-                 risk_profiles: bool = False, rates=None) -> WalkForwardResult:
+                 risk_profiles: bool = False, rates=None, risk_parity: bool = False) -> WalkForwardResult:
     """Annual walk-forward: estimate on train years only, freeze, apply to the next year only.
 
     Strategies: the engine's Maximum Sharpe and Minimum Volatility (plus the configured risk
@@ -431,7 +446,8 @@ def walk_forward(prices: pd.DataFrame, config: Config, *, train_years: int | Non
                                decision_lag=settings.decision_lag_sessions, end_exclusive=config.end,
                                include_partial_final_year=include_partial_final_year,
                                min_sessions_per_year=MIN_SESSIONS_PER_YEAR if strict else 0)
-    policies = [*OPTIMIZED, *([name for name, _ in config.targets] if risk_profiles else [])]
+    policies = [*OPTIMIZED, *([name for name, _ in config.targets] if risk_profiles else []),
+                *([EQUAL_RISK] if risk_parity else [])]
     strategies = [*policies, CONSTRAINED_EQUAL_WEIGHT, EQUAL_WEIGHT]
     # Same bounds as every policy; infeasible bounds fail here rather than being relaxed.
     investable = constrained_equal_weights(universe.columns, config)
@@ -446,7 +462,7 @@ def walk_forward(prices: pd.DataFrame, config: Config, *, train_years: int | Non
         if train.index[-1] > fold.rebalance_date or train.index[-1] >= fold.test_start:
             raise RuntimeError(f"{fold.test_year}: training data reach the rebalance or test period.")
         fold_config = config if rates is None else replace(config, risk_free_rate=rates.mean_risk_free(train.index))
-        selected, summary = fit_policies(train, fold_config, risk_profiles)
+        selected, summary = fit_policies(train, fold_config, risk_profiles, risk_parity)
         summary["Risk-free rate (training mean)"] = fold_config.risk_free_rate
         selected[CONSTRAINED_EQUAL_WEIGHT] = investable
         selected[EQUAL_WEIGHT] = pd.Series(1 / universe.shape[1], index=universe.columns)
@@ -501,7 +517,7 @@ def walk_forward(prices: pd.DataFrame, config: Config, *, train_years: int | Non
         gross_returns=gross_oos, gross_metrics=growth_metrics(gross_oos, base, metric_config),
         trading=pd.DataFrame(trading).rename_axis("Test year"),
         costs=pd.DataFrame(costs).rename_axis("Test year"), settings=settings,
-        strategies=tuple(strategies), benchmark=benchmark, universe=tuple(universe.columns))
+        strategies=tuple(strategies), benchmark=benchmark, universe=tuple(universe.columns), config=config)
 
 
 @dataclass

@@ -133,7 +133,7 @@ def deterministic():
 
 
 def stub_weights(monkeypatch, schedule, seen):
-    def fake(train, config, risk_profiles=False):
+    def fake(train, config, risk_profiles=False, risk_parity=False):
         year = train.index[-1].year + 1
         seen[year] = (train.index[0], train.index[-1])
         w = pd.Series(schedule[year], index=train.columns)

@@ -179,9 +179,9 @@ def test_walk_forward_uses_point_in_time_risk_free_means(market, monkeypatch):
     seen = {}
     original = robustness.fit_policies
 
-    def spy(train, config, risk_profiles=False):
+    def spy(train, config, risk_profiles=False, risk_parity=False):
         seen[train.index[-1].year + 1] = (config.risk_free_rate, rates.mean_risk_free(train.index))
-        return original(train, config, risk_profiles)
+        return original(train, config, risk_profiles, risk_parity)
 
     monkeypatch.setattr(robustness, "fit_policies", spy)
     wf = robustness.walk_forward(prices, cfg, rates=rates)
@@ -218,11 +218,13 @@ def test_decision_log_tracks_preference_changes(market, tmp_path, monkeypatch):
     monkeypatch.setattr(experiments, "code_version", lambda _: {"commit": "c", "dirty": False, "worktree_hash": "h"})
     base = {"universe": {"Apple": "AAPL", "Gold": "GC=F"}}
     registry = tmp_path / "registry.jsonl"
-    wf = robustness.walk_forward(prices, cfg)
     first = parse_research_config({**base, "constraints": {"max_weights": {"Gold": .1}, "provenance": "p"}}, tmp_path)
     second = parse_research_config({**base, "constraints": {"max_weights": {"Gold": .15}, "provenance": "p"}}, tmp_path)
+    # The registry stores the configuration actually evaluated: two runs with different investor caps.
+    wf = robustness.walk_forward(prices, cfg)
+    wf_changed = robustness.walk_forward(prices, replace(cfg, max_weights=(("A", .25),)))
     record_experiment(wf, first, label="a", registry=registry, category="baseline")
-    record_experiment(wf, second, label="b", registry=registry, category="baseline")
+    record_experiment(wf_changed, second, label="b", registry=registry, category="baseline")
     with pytest.raises(ValueError, match="hypothesis"):
         record_experiment(wf, second, label="c", registry=registry, category="selection")
     log = decision_log(registry)

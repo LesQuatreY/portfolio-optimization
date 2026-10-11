@@ -32,8 +32,11 @@ benchmark:
 
 # Synthetic daily-reset leverage: {underlying name: factor > 1}. The leveraged series replaces
 # its underlying in the optimizer universe. {} = no leverage.
-leverage:
-  Nasdaq 100: 2.0
+# Investor decision (phase 5, registry `kind: decision`): NO leveraged product in the main research
+# universe. Taken after 2013-2019 results involving the synthetic Nasdaq 100 x2 had been viewed, so it
+# is informed by validation results. Leverage support, its tests and past results are preserved; a
+# separate leveraged research configuration can re-enable it (e.g. {Nasdaq 100: 2.0}).
+leverage: {}
 
 # Running costs of synthetic leverage, accrued on calendar days in the product's native currency:
 # annual drag = annual_fee + (factor - 1) * (financing_base[currency] + financing_spread).
@@ -81,7 +84,14 @@ constraints:
 
 estimation:
   covariance: ledoit_wolf        # ledoit_wolf | sample
-  expected_returns: sample       # sample | bayes_stein (Maximum Sharpe only)
+  expected_returns: sample       # sample | bayes_stein
+  growth_drift: sample           # sample | estimated (growth objective re-centred on expected_returns)
+
+# Pre-registered estimation-method variants (phase 5 plan), compared on the main universe only.
+# Each entry overrides `estimation` keys; {} is the reference method above.
+method_variants:
+  Moyenne historique (référence): {}
+  Bayes-Stein (dérive rétrécie): {expected_returns: bayes_stein, growth_drift: estimated}
 
 # Risk profiles: ceilings on the ESTIMATED annualized volatility (ex-ante, training data).
 # They are not drawdown limits and give no guarantee on future volatility or losses.
@@ -116,6 +126,5 @@ walk_forward:
 universe_variants:
   Univers complet: []
   Sans Apple: [Apple]                              # Apple ineligible as a direct holding
-  Nasdaq 100 sans levier: {unlevered: [Nasdaq 100]}  # Nasdaq 100 x2 replaced by Nasdaq 100 (1x); phase-4 plan
-  Sans Nasdaq 100: [Nasdaq 100]                    # no direct Nasdaq exposure at any leverage
+  Sans Nasdaq 100: [Nasdaq 100]                    # no direct Nasdaq 100 exposure
   Sans Or: [Gold]                                  # Gold ineligible
