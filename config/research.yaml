@@ -23,6 +23,7 @@ universe:
   Gold: GC=F                     # COMEX front-month gold, unadjusted: tracks spot gold (audited vs GLD,
                                  # docs/DATA_AUDIT.md); holding cost below = physical gold ETC fee
   Coca-Cola: KO                  # adjusted close (dividends reinvested)
+  Emerging Markets: MSCI:891800:NETR  # MSCI EM Net Total Return index (USD, unhedged); phase 7B
 
 # Passive benchmark. Loaded even when it is not an eligible asset; never allocated through
 # this entry. Equal Weight over the eligible universe is always reported as well.
@@ -65,7 +66,10 @@ rates:
 #   S&P 500:    ~0.07% TER + ~0.28% withholding suffered by a UCITS fund on a ~1.9% dividend yield
 #               (the TR index reinvests GROSS dividends).
 #   Gold:       ~0.25% fee of a physically backed gold ETC (GC=F tracks spot gold before any fee).
+#   Emerging Markets: ~0.20% for a low-cost UCITS MSCI EM tracker (provisional assumption; the NETR index is
+#               already net of MSCI withholding-tax assumptions, so no further dividend adjustment).
 holding_costs:
+  Emerging Markets: 0.0020
   MSCI World: 0.0020
   S&P 500: 0.0035
   Gold: 0.0025
@@ -75,26 +79,30 @@ holding_costs:
 # Investor-declared policy constraints (personal preferences, never tuned on results). Edit freely:
 # every run records the values and this provenance note in experiments/registry.jsonl.
 constraints:
-  max_weights: {"Gold": .10, "Apple": .4}     # e.g. {Gold: 0.10, "Nasdaq 100 x2": 0.50}
+  max_weights: {"Gold": .10, "Apple": .40, "Coca-Cola": .10}
   min_weights: {}     # only when explicitly required by the investor
   provenance: >-
-    Investor-declared preferences (Gold <= 10%, Apple <= 40%), formally confirmed by the investor in
-    phase 3, after 2013-2019 validation results of phases 1-2 had been viewed; not pre-registered and
-    not selected by optimization.
+    Investor-declared preferences: Gold <= 10% and Apple <= 40% (confirmed in phase 3) and Coca-Cola <= 10%
+    (confirmed in phase 7B, to limit a single-company diversifier). All were declared after 2013-2019
+    validation results had been viewed; not pre-registered and not selected by optimization.
 
 estimation:
   covariance: ledoit_wolf        # ledoit_wolf | sample
   expected_returns: sample       # sample | bayes_stein
   growth_drift: sample           # sample | estimated (growth objective re-centred on expected_returns)
+  # Risk-model sampling (phase 7B): weekly = last common close of each Friday-ending week, annualized x52,
+  # to limit the asynchronous-close bias (EM vs Europe/US). Expected returns and accounting stay daily.
+  covariance_frequency: weekly   # daily | weekly
 
 # Pre-registered estimation-method variants, compared on the main universe only. Each entry overrides
 # estimation keys ({} = reference). Phase 6 plan (docs/PHASE6_RESEARCH_PLAN.md): anchored expected
 # returns (Black-Litterman, ERC equilibrium, tau = 1/T) and resampled efficiency (Michaud, 50 draws).
+# Phase 7B keeps only the reference and Michaud variants active; the anchored variant
+# ({expected_returns: anchored, growth_drift: estimated}) stays available and in the registry.
 # The phase-5 Bayes-Stein variant ({expected_returns: bayes_stein, growth_drift: estimated}) is not
 # re-run; its results stay in the registry and docs/PHASE5_RESULTS.md.
 method_variants:
   Moyenne historique (référence): {}
-  Rendements ancrés (Black-Litterman, ancre ERC): {expected_returns: anchored, growth_drift: estimated}
   Frontière rééchantillonnée (Michaud, 50 tirages): {resampling_draws: 50}
 
 # Risk profiles: ceilings on the ESTIMATED annualized volatility (ex-ante, training data).
@@ -128,7 +136,5 @@ walk_forward:
 # A list = assets made ineligible; {exclude: [...], unlevered: [...]} may also replace a synthetic
 # leveraged series by its unleveraged underlying (one variable at a time).
 universe_variants:
-  Univers complet: []
-  Sans Apple: [Apple]                              # Apple ineligible as a direct holding
-  Sans Nasdaq 100: [Nasdaq 100]                    # no direct Nasdaq 100 exposure
-  Sans Or: [Gold]                                  # Gold ineligible
+  Univers actuel (8 actifs): []
+  Univers historique (7 actifs): [Emerging Markets]   # phase 1-6 universe, reproducible

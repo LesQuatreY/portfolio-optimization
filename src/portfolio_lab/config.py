@@ -92,6 +92,8 @@ class Config:
     include_leveraged_in_frontier: bool = True
     # Optimizer risk model: "ledoit_wolf" (shrinkage) or "sample" (historical sample covariance).
     covariance_method: str = "ledoit_wolf"
+    # Sampling frequency of the risk model: "daily" (x trading_days) or "weekly" (W-FRI closes, x 52).
+    covariance_frequency: str = "daily"
     # Maximum Sharpe expected returns: "sample" (arithmetic mean; reference default) or "bayes_stein"
     # (Jorion 1986 shrinkage; pre-specified OOS experiment documented in README).
     expected_return_method: str = "sample"
@@ -147,6 +149,8 @@ class Config:
         if self.fx_provider not in {"fred", "yahoo"} or not self.fx_symbol.strip():
             raise ValueError("FX must come from a supported provider ('fred' or 'yahoo') with a series id.")
         validate_covariance_method(self.covariance_method)
+        if self.covariance_frequency not in ("daily", "weekly"):
+            raise ValueError("covariance_frequency must be 'daily' or 'weekly'.")
         validate_expected_return_method(self.expected_return_method)
         if self.growth_drift not in ("sample", "estimated"):
             raise ValueError("growth_drift must be 'sample' or 'estimated'.")

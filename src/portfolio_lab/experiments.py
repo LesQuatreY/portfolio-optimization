@@ -39,6 +39,7 @@ CATEGORIES = ("baseline", "pre-registered", "exploratory", "correction", "select
 NEEDS_HYPOTHESIS = ("pre-registered", "correction", "selection")
 # Assumptions tracked by the decision log (keys of the snapshot's engine config).
 TRACKED = ("eligible", "benchmark", "leverage", "max_weights", "min_weights", "covariance_method",
+           "covariance_frequency",
            "expected_return_method", "targets", "risk_free_rate", "risk_free_series", "financing_series",
            "leverage_annual_fee", "leverage_financing_rate", "leverage_financing_spread", "holding_costs",
            "walk_forward")
@@ -132,7 +133,7 @@ def record_experiment(result, research, *, label: str, notes: str = "", project_
 RESULT_KEYS = ("config", "evaluated_universe", "policies", "benchmark", "walk_forward_used")
 _LEVERAGE_KEYS = ("leverage_annual_fee", "leverage_financing_rate", "leverage_financing_spread", "financing_series")
 # Fields added after some registry entries were written, with the value equivalent to their absence.
-_LEGACY_DEFAULTS = {"growth_drift": "sample", "resampling_draws": 0, "min_weights": [], "holding_costs": [],
+_LEGACY_DEFAULTS = {"growth_drift": "sample", "resampling_draws": 0, "covariance_frequency": "daily", "min_weights": [], "holding_costs": [],
                     "risk_free_series": None,
                     "financing_series": [], "leverage_financing_spread": 0.}
 
@@ -250,7 +251,8 @@ def register_decision(registry: Path, *, label: str, rationale: str, informed_by
     registry = Path(registry)
     project_dir = registry.parent.parent if project_dir is None else Path(project_dir)
     now = f"{pd.Timestamp.now(tz='UTC'):%Y%m%dT%H%M%SZ}"
-    entry = {"id": f"{now}-decision", "timestamp_utc": now, "kind": "decision", "category": "decision",
+    entry = {"id": f"{now}-decision-{hashlib.sha256(label.encode()).hexdigest()[:6]}", "timestamp_utc": now,
+             "kind": "decision", "category": "decision",
              "label": label, "rationale": rationale, "informed_by_validation": bool(informed_by_validation),
              "code": code_version(project_dir), "configuration": None}
     registry.parent.mkdir(parents=True, exist_ok=True)

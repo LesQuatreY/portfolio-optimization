@@ -181,13 +181,14 @@ def test_risk_contributions_and_pca_shares():
     assert pca.loc["Explained share", "PC1"] > .6 and pca.loc["Explained share"].sum() == pytest.approx(1)
 
 
-def test_shared_config_registers_the_two_phase6_methods_without_leverage():
+def test_shared_config_keeps_reference_and_michaud_active_without_leverage():
     research = load_research_config(ROOT)
     methods = research.methods()
     assert research.config.leverage == ()
     kinds = {(c.expected_return_method, c.growth_drift, c.resampling_draws) for c in methods.values()}
-    assert ("anchored", "estimated", 0) in kinds and ("sample", "sample", 50) in kinds
-    assert dict(research.config.max_weights) == {"Gold": .10, "Apple": .40}
+    # Phase 7B: reference and Michaud active; the anchored method stays available (tested above).
+    assert kinds == {("sample", "sample", 0), ("sample", "sample", 50)}
+    assert dict(research.config.max_weights) == {"Gold": .10, "Apple": .40, "Coca-Cola": .10}
 
 
 def test_frontier_checks_use_the_optimized_objective_with_an_estimated_drift(correlated_market):
@@ -206,3 +207,26 @@ def test_resampling_field_added_later_does_not_make_old_evaluations_look_new():
     new = {**old, "config": {**old["config"], "resampling_draws": 0}}
     assert evaluation_fingerprint(old) == evaluation_fingerprint(new)
     assert evaluation_fingerprint(old) != evaluation_fingerprint({**old, "config": {**old["config"], "resampling_draws": 50}})
+
+
+# --- Phase 7A data-quality diagnostics ----------------------------------------------------------
+
+def test_series_quality_flags_jumps_gaps_and_stale_closes():
+    from portfolio_lab.diagnostics import series_quality
+    dates = pd.bdate_range("2010-01-04", periods=8)
+    s = pd.Series([100, 100, 101, 145, 102, 103, np.nan, 104.], index=dates, name="X")
+    q = series_quality(s.drop(dates[5]))
+    assert q["Missing in raw"] == 1 and q["Unchanged closes"] == 1
+    assert q["|daily return| > 10%"] == 2 and q["Largest daily move"] == pytest.approx(.4356, abs=1e-3)
+    assert q["Max gap (days)"] == 5   # Friday 8 -> Wednesday 13 (Monday dropped, Tuesday missing)
+
+
+def test_asynchrony_detects_a_one_day_lag():
+    from portfolio_lab.diagnostics import asynchrony
+    rng = np.random.default_rng(5)
+    dates = pd.bdate_range("2005-01-03", periods=1500)
+    shocks = rng.standard_normal(1500) * .01
+    early = pd.Series(100 * np.cumprod(1 + shocks), index=dates)
+    late = pd.Series(100 * np.cumprod(1 + np.r_[0, shocks[:-1]]), index=dates)   # same moves, one day later
+    out = asynchrony(early, late)
+    assert out["Daily correlation"] < .1 and out["Weekly correlation"] > .7

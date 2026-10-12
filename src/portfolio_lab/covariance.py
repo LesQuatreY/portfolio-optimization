@@ -4,6 +4,10 @@ import numpy as np
 import pandas as pd
 
 COVARIANCE_METHODS = {"ledoit_wolf": "Ledoit-Wolf", "sample": "Sample"}
+COVARIANCE_FREQUENCIES = ("daily", "weekly")
+# Weekly convention: the last common close of each week ending Friday (W-FRI); annualized x 52.
+WEEKLY_RULE = "W-FRI"
+WEEKS_PER_YEAR = 52
 
 
 @dataclass(frozen=True)
@@ -47,3 +51,32 @@ def estimate_covariance(returns: pd.DataFrame, method: str = "ledoit_wolf",
     if not np.isfinite(matrix).all() or not np.allclose(matrix, matrix.T, rtol=0, atol=1e-15 * np.abs(matrix).max()):
         raise ValueError(f"{COVARIANCE_METHODS[method]} covariance is not finite and symmetric.")
     return CovarianceEstimate(annual, method, shrinkage)
+
+
+def weekly_returns(prices: pd.DataFrame) -> pd.DataFrame:
+    """Simple returns between consecutive week-end closes (last common observation of each W-FRI week).
+
+    A week whose Friday is a holiday uses its last available common close (e.g. Thursday); a week with no
+    common observation is skipped, so its move is carried by the next weekly return (never filled).
+    """
+    from .returns import simple_returns
+    week_end = prices.groupby(prices.index.to_period(WEEKLY_RULE)).tail(1)
+    return simple_returns(week_end)
+
+
+def estimate_covariance_from_prices(prices: pd.DataFrame, method: str = "ledoit_wolf", frequency: str = "daily",
+                                    trading_days: int = 252) -> CovarianceEstimate:
+    """Annualized covariance from daily prices, sampled daily (x trading_days) or weekly (x 52).
+
+    Weekly sampling reduces the bias of asynchronous closes (markets closing at different hours) on
+    correlations. Only the risk model changes: expected returns and portfolio accounting stay daily.
+    """
+    from .returns import simple_returns
+    if frequency not in COVARIANCE_FREQUENCIES:
+        raise ValueError(f"Unsupported covariance frequency '{frequency}'; use one of {COVARIANCE_FREQUENCIES}.")
+    if frequency == "daily":
+        return estimate_covariance(simple_returns(prices), method, trading_days)
+    weekly = weekly_returns(prices)
+    if len(weekly) <= prices.shape[1] + 1:
+        raise ValueError("Too few weekly observations for a covariance estimate.")
+    return estimate_covariance(weekly, method, WEEKS_PER_YEAR)

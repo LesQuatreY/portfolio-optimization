@@ -23,7 +23,10 @@ def test_catalogue_resolves_msci_world():
     assert asset.currency == "USD"
     assert asset.return_type == "Net Total Return"
     assert ASSET_CATALOGUE["IWDA.AS"].provider == "yahoo"
-    assert all(a.provider == "yahoo" for a in ASSET_CATALOGUE.values() if a is not MSCI_WORLD)
+    msci_symbols = {a.symbol for a in ASSET_CATALOGUE.values() if a.provider == "msci"}
+    # Official MSCI indices: World (990100) and Emerging Markets (891800, verified on msci.com; the
+    # msci-data docstring mislabels 891800 and 664185).
+    assert msci_symbols == {"MSCI:990100:NETR", "MSCI:891800:NETR"}
 
 
 def test_normalization_parses_sorts_and_deduplicates():

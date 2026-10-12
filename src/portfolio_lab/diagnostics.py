@@ -83,3 +83,34 @@ def exposure_changes(weights: pd.DataFrame, sigma: pd.DataFrame) -> pd.DataFrame
         rows.append({"Year": year, "Instrument distance": 0.5 * float((a - b).abs().sum()),
                      "Risk distance": risk_distance(a, b, sigma)})
     return pd.DataFrame(rows).set_index("Year")
+
+
+def series_quality(series: pd.Series, large_move: float = .10) -> dict:
+    """Coverage and anomaly summary of one price series (observed values only).
+
+    Large one-day moves and unchanged closes are flags for manual review, not automatic errors:
+    genuine crashes exist, but a large jump that reverses or disagrees with comparable series usually
+    reveals a provider defect.
+    """
+    observed = series.dropna()
+    if len(observed) < 2:
+        raise ValueError(f"{series.name}: not enough observations.")
+    returns = observed.pct_change().dropna()
+    gaps = observed.index.to_series().diff().dt.days.dropna()
+    return {"First date": observed.index[0], "Last date": observed.index[-1], "Observations": len(observed),
+            "Missing in raw": int(series.isna().sum()), "Max gap (days)": int(gaps.max()),
+            f"|daily return| > {large_move:.0%}": int((returns.abs() > large_move).sum()),
+            "Largest daily move": float(returns.abs().max()), "Unchanged closes": int((observed.diff() == 0).sum())}
+
+
+def asynchrony(a: pd.Series, b: pd.Series, freq: str = "W-FRI") -> dict:
+    """Daily versus lower-frequency return correlation on common dates.
+
+    Markets closing at different times (e.g. an emerging-market index vs a US-listed ETF or US equities)
+    show a daily correlation well below the weekly one; covariance estimated on daily data then
+    overstates diversification.
+    """
+    both = pd.concat([a, b], axis=1).dropna()
+    daily = both.pct_change().dropna().corr().iloc[0, 1]
+    lower = both.resample(freq).last().pct_change().dropna().corr().iloc[0, 1]
+    return {"Daily correlation": float(daily), "Weekly correlation": float(lower), "Gap": float(lower - daily)}

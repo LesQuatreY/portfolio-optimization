@@ -1,6 +1,6 @@
 """Compare archived and refactored engines with exactly the same EUR inputs AND assumptions.
 
-The archived notebook engine uses the sample covariance, sample-mean expected returns and no
+The archived notebook engine uses the daily sample covariance, sample-mean expected returns and no
 investor bounds over every configured asset. The refactored engine is therefore re-run here
 with exactly those settings on the same exported prices, instead of reading the notebook's
 results (which use the research configuration: Ledoit-Wolf, investor caps, eligibility).
@@ -47,7 +47,7 @@ namespace = dict(
 )
 for cell_number in (12, 14):
     exec(compile("".join(notebook["cells"][cell_number]["source"]), f"original-cell-{cell_number}", "exec"), namespace)
-equivalent = replace(config, covariance_method="sample", expected_return_method="sample",
+equivalent = replace(config, covariance_method="sample", covariance_frequency="daily", expected_return_method="sample",
                      max_weights=(), min_weights=(), eligible=())
 refactored = optimize_frontier(prices, equivalent)
 new, new_weights = refactored.summary, refactored.weights

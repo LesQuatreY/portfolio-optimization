@@ -597,7 +597,7 @@ def variant_config(config: Config, excluded: Sequence[str] = (), unlevered: Sequ
 
 def compare_universes(prices: pd.DataFrame, config: Config, variants: Mapping, *,
                       risk_profiles: bool = False, settings: WalkForwardSettings | None = None,
-                      rates=None) -> UniverseComparison:
+                      rates=None, risk_parity: bool = False) -> UniverseComparison:
     """Same walk-forward for each variant; a variant changes eligibility (and optionally leverage) only.
 
     `variants` maps a label to the asset names it excludes from the configured eligible universe
@@ -615,7 +615,8 @@ def compare_universes(prices: pd.DataFrame, config: Config, variants: Mapping, *
             variant = variant_config(config, excluded, unlevered)
         except ValueError as exc:
             raise ValueError(f"Variant '{label}': {exc}") from exc
-        result = walk_forward(prices, variant, settings=settings, risk_profiles=risk_profiles, rates=rates)
+        result = walk_forward(prices, variant, settings=settings, risk_profiles=risk_profiles, rates=rates,
+                              risk_parity=risk_parity)
         results[label] = result
         described[label] = excluded + tuple(f"{name} (sans levier)" for name in unlevered)
         table = result.summary()

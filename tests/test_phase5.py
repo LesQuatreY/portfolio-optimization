@@ -47,7 +47,7 @@ def test_main_research_universe_has_no_leverage_but_keeps_nasdaq_and_caps():
     cfg = research.config
     assert cfg.leverage == ()
     assert "Nasdaq 100" in research.eligible and "Apple" in research.eligible
-    assert dict(cfg.max_weights) == {"Gold": .10, "Apple": .40}
+    assert dict(cfg.max_weights) == {"Gold": .10, "Apple": .40, "Coca-Cola": .10}
     assert all(" x" not in name for name in robustness.select_frontier_assets(cfg))
     # Leverage support itself is preserved.
     levered = parse_research_config({"universe": {"Nasdaq 100": "QQQ"}, "leverage": {"Nasdaq 100": 2.0}}).config

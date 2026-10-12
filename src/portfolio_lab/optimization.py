@@ -66,7 +66,9 @@ class PortfolioOptimizer:
         self.returns = simple_returns(prices)
         self.R = self.returns.to_numpy()
         self.centered = self.R - self.R.mean(axis=0)
-        self.estimate = estimate_covariance(self.returns, config.covariance_method, config.trading_days)
+        from .covariance import estimate_covariance_from_prices
+        self.estimate = estimate_covariance_from_prices(prices, config.covariance_method,
+                                                        config.covariance_frequency, config.trading_days)
         self.covariance = self.estimate.matrix
         self.sigma = self.covariance.to_numpy()
         # Realized arithmetic mean (reported metrics) vs model expected returns (Sharpe objective).
@@ -120,7 +122,7 @@ class PortfolioOptimizer:
 
     def variance(self, w):
         """Risk-model variance w.T @ Sigma @ w for the configured covariance estimator."""
-        if self.estimate.method == "sample":
+        if self.estimate.method == "sample" and self.config.covariance_frequency == "daily":
             return self.realized_variance(w)
         return float(w @ self.sigma @ w)
 

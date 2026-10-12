@@ -198,7 +198,7 @@ def test_walk_forward_uses_point_in_time_risk_free_means(market, monkeypatch):
 
 def test_shared_config_keeps_the_investor_preferences_with_provenance():
     research = load_research_config(ROOT)
-    assert dict(research.config.max_weights) == {"Gold": .10, "Apple": .40}
+    assert dict(research.config.max_weights) == {"Gold": .10, "Apple": .40, "Coca-Cola": .10}
     assert "not pre-registered" in research.constraint_provenance
     assert research.snapshot()["constraint_provenance"] == research.constraint_provenance
 

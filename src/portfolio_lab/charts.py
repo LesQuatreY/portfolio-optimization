@@ -45,7 +45,7 @@ LABELS = {
     "Mean return annualized": "Rendement arithmétique annualisé", "Estimated return": "Rendement espéré estimé",
     "CAGR excluding best year": "CAGR hors meilleure année", "Best year": "Meilleure année",
     "Worst year return": "Pire rendement annuel", "Gross CAGR (before costs)": "CAGR brut (avant coûts)",
-    "Mean traded turnover": "Rotation annuelle moyenne", "Gold": "Or",
+    "Mean traded turnover": "Rotation annuelle moyenne", "Gold": "Or", "Emerging Markets": "Marchés émergents",
 }
 
 

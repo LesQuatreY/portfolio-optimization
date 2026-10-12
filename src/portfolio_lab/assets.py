@@ -122,6 +122,23 @@ ASSET_CATALOGUE: Mapping[str, Asset] = MappingProxyType({
         ),
 
         Asset(
+            "Emerging Markets",
+            "MSCI:891800:NETR",
+            "MSCI Emerging Markets Index (index code 891800), Net Total Return variant (NETR)",
+            "USD",
+            "Net Total Return",
+            "Net dividends reinvested according to MSCI index methodology",
+            (
+                "Official index, not an ETF: investable only through a tracker (holding cost set in "
+                "research.yaml). Index code verified on msci.com (the msci-data package docstring mislabels "
+                "codes 891800 and 664185). Emerging-market closes precede the US close: estimate covariance "
+                "on weekly returns. USD levels, unhedged; converted to EUR by the standard FX pipeline."
+            ),
+            reference="https://www.msci.com/indexes/index/891800",
+            provider="msci",
+        ),
+
+        Asset(
             "iShares Core MSCI World",
             "IWDA.AS",
             "iShares Core MSCI World UCITS ETF USD (Acc); Euronext Amsterdam listing",
@@ -186,7 +203,12 @@ ASSET_CATALOGUE: Mapping[str, Asset] = MappingProxyType({
             "EUR",
             "Adjusted price",
             "Yahoo dividend/split adjustments; distributions assumed reinvested",
-            "ETF fees and tracking differences apply.",
+            (
+                "ETF fees and tracking differences apply. Phase-7A audit: the Yahoo history starts "
+                "2008-01-02 and contains implausible one-day jumps (e.g. +43% on 2011-06-28, +36% "
+                "on 2009-01-06) and 270 zero-volume days before 2020; daily correlation with MSCI "
+                "World 0.26 over 2008-2012. Not suitable for research without a verified source."
+            ),
             reference="https://finance.yahoo.com/quote/IWDP.AS/",
         ),
 

@@ -62,7 +62,8 @@ class ResearchConfig:
     def methods(self) -> dict[str, Config]:
         """Config of each pre-registered estimation-method variant (only estimation fields change)."""
         keys = {"expected_returns": "expected_return_method", "growth_drift": "growth_drift",
-                "covariance": "covariance_method", "resampling_draws": "resampling_draws"}
+                "covariance": "covariance_method", "resampling_draws": "resampling_draws",
+                "covariance_frequency": "covariance_frequency"}
         return {label: replace(self.config, **{keys[k]: (int(v) if k == "resampling_draws" else v)
                                                for k, v in overrides})
                 for label, overrides in self.method_variants} or {"Référence": self.config}
@@ -99,8 +100,8 @@ class ResearchConfig:
             "Poids maximum (contrainte investisseur)": caps,
             "Poids minimum (contrainte investisseur)": floors,
             "Origine des contraintes": self.constraint_provenance or "non renseignée",
-            "Covariance / rendements espérés / dérive": (f"{c.covariance_method} / {c.expected_return_method} / "
-                                                          f"{c.growth_drift}"),
+            "Covariance / rendements espérés / dérive": (f"{c.covariance_method} ({c.covariance_frequency}) / "
+                                                          f"{c.expected_return_method} / {c.growth_drift}"),
             "Variantes de méthode pré-enregistrées": ", ".join(label for label, _ in self.method_variants) or "aucune",
             "Taux sans risque (Sharpe, EUR)": (f"série {c.risk_free_series}, point-in-time" if c.risk_free_series
                                                else f"constante {c.risk_free_rate:.2%}"),
@@ -168,7 +169,7 @@ def parse_research_config(raw: Mapping, project_dir: Path = Path("."), source: P
                           ("protocol", protocol), ("rates", rates)):
         allowed = {"leverage_costs": {"annual_fee"},
                    "constraints": {"max_weights", "min_weights", "provenance"},
-                   "estimation": {"covariance", "expected_returns", "growth_drift"},
+                   "estimation": {"covariance", "expected_returns", "growth_drift", "covariance_frequency"},
                    "protocol": {"study_end", "development_end", "analysis_window"},
                    "rates": {"risk_free", "financing_base", "financing_spread"}}[name]
         if set(mapping) - allowed:
@@ -204,6 +205,7 @@ def parse_research_config(raw: Mapping, project_dir: Path = Path("."), source: P
         covariance_method=estimation.get("covariance", "ledoit_wolf"),
         expected_return_method=estimation.get("expected_returns", "sample"),
         growth_drift=estimation.get("growth_drift", "sample"),
+        covariance_frequency=estimation.get("covariance_frequency", "daily"),
         risk_free_rate=risk_free.constant if risk_free.constant is not None else 0.,
         targets=tuple((str(k), float(v)) for k, v in profiles.items()) or Config.__dataclass_fields__[
             "targets"].default,
@@ -233,7 +235,8 @@ def parse_research_config(raw: Mapping, project_dir: Path = Path("."), source: P
     methods = []
     for label, overrides in _mapping(raw, "method_variants").items():
         overrides = dict(overrides or {})
-        if set(overrides) - {"expected_returns", "growth_drift", "covariance", "resampling_draws"}:
+        if set(overrides) - {"expected_returns", "growth_drift", "covariance", "resampling_draws",
+                             "covariance_frequency"}:
             raise ValueError(f"research config: method '{label}' may only override estimation keys.")
         methods.append((str(label), tuple(sorted((str(k), str(v)) for k, v in overrides.items()))))
     provenance = str(constraints.get("provenance", "")).strip()
@@ -286,7 +289,9 @@ class ResearchStudy:
         from .returns import simple_returns
         dev = self.development_prices()
         dev = dev if assets is None else dev[list(assets)]
-        return estimate_covariance(simple_returns(dev), "ledoit_wolf", self.config.trading_days).matrix
+        from .covariance import estimate_covariance_from_prices
+        return estimate_covariance_from_prices(dev, "ledoit_wolf", self.config.covariance_frequency,
+                                               self.config.trading_days).matrix
 
 
 def build_rates(config: Config, provider=None):
