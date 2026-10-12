@@ -71,7 +71,10 @@ class PortfolioOptimizer:
         self.sigma = self.covariance.to_numpy()
         # Realized arithmetic mean (reported metrics) vs model expected returns (Sharpe objective).
         self.realized_mean = self.R.mean(axis=0) * config.trading_days
-        self.expected = estimate_expected_returns(self.returns, config.expected_return_method, config.trading_days)
+        anchored = config.expected_return_method == "anchored"
+        # The anchored estimator needs the window's ERC portfolio, available once bounds exist (below).
+        self.expected = estimate_expected_returns(self.returns, "sample" if anchored else config.expected_return_method,
+                                                  config.trading_days)
         self.mu = self.expected.values.to_numpy()
         # Returns seen by the growth objective. Realized metrics always use the actual returns.
         if config.growth_drift == "estimated":
@@ -101,6 +104,13 @@ class PortfolioOptimizer:
         self.log = []
         self.equal = np.full(self.n, 1 / self.n)
         self.variance_scale = max(float(np.diag(self.sigma).max()), 1e-12)
+        if anchored:
+            from .expected_returns import anchored_expected_returns
+            self.anchor = self.equal_risk_contribution()["weights"]
+            self.expected = anchored_expected_returns(self.returns, self.covariance, self.anchor, config.trading_days)
+            self.mu = self.expected.values.to_numpy()
+            if config.growth_drift == "estimated":
+                self.R_objective = self.R - self.R.mean(axis=0) + self.mu / config.trading_days
 
     def realized_variance(self, w):
         # Algebraically w.T @ Sample @ w, evaluated without cancellation near a
@@ -113,6 +123,10 @@ class PortfolioOptimizer:
         if self.estimate.method == "sample":
             return self.realized_variance(w)
         return float(w @ self.sigma @ w)
+
+    def model_growth(self, w) -> float:
+        """Annualized log growth the frontier maximizes (on the objective's returns)."""
+        return -self.growth_objective(np.asarray(w, dtype=float))
 
     def growth_objective(self, w):
         factors = np.maximum(1 + self.R_objective @ w, np.finfo(float).tiny)
@@ -343,13 +357,16 @@ class PortfolioOptimizer:
             else:
                 optimal = self.solve(self.growth_objective, self.growth_gradient, np.eye(self.n)[i],
                                      f"Dominance {asset}", risk)
-            if optimal["CAGR"] < single["CAGR"] - self.config.tolerance:
+            # Checked on the optimized objective (model growth). With the sample drift it orders portfolios
+            # exactly like realized CAGR; with an estimated drift realized CAGR need not follow it.
+            if self.model_growth(optimal["weights"]) < self.model_growth(single["weights"]) - self.config.tolerance:
                 raise RuntimeError(f"Frontier does not dominate {asset} at its own risk.")
             dominance.append({"Asset": asset, "100% CAGR": single["CAGR"], "100% volatility": single["Volatility"],
                               "Frontier CAGR": optimal["CAGR"], "Frontier volatility": optimal["Volatility"],
                               "100% estimated volatility": risk,
                               "Frontier estimated volatility": optimal["Estimated volatility"]})
-        if ((np.diff(frontier["CAGR"]) < -self.config.tolerance).any()
+        growth = np.array([self.model_growth(w) for w in frontier["weights"]])
+        if ((np.diff(growth) < -self.config.tolerance).any()
                 or (np.diff(frontier["Estimated volatility"]) < -self.config.tolerance).any()):
             raise RuntimeError("Frontier upper branch is not monotonic.")
         summary = pd.DataFrame({name: {k: v for k, v in p.items() if k != "weights"}

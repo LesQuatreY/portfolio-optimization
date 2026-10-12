@@ -431,3 +431,35 @@ def risk_forecast_chart(risk: pd.DataFrame, *, policy_order: Sequence[str] | Non
     fig.update_yaxes(tickformat=".0%", title="Volatilité réalisée sur l'année de test")
     return _layout(fig, "Risque prévu vs risque réalisé — par année de test",
                    "Points au-dessus de la diagonale : risque sous-estimé à l'apprentissage.", 480)
+
+
+def correlation_heatmap(corr: pd.DataFrame, *, title: str = "Corrélations des rendements quotidiens — apprentissage"
+                        ) -> go.Figure:
+    """Diverging heatmap (blue = positive, red = negative, grey midpoint) with the values printed."""
+    labels = [fr(c) for c in corr.columns]
+    fig = go.Figure(go.Heatmap(z=corr.to_numpy(), x=labels, y=labels, zmin=-1, zmax=1,
+                               colorscale=[[0, "#e34948"], [.5, "#f0efec"], [1, "#2a78d6"]],
+                               text=corr.round(2).to_numpy(), texttemplate="%{text}",
+                               hovertemplate="%{y} / %{x} : %{z:.2f}<extra></extra>", colorbar=dict(title="ρ")))
+    fig.update_yaxes(autorange="reversed")
+    return _layout(fig, title, "Corrélation de rendements mesurée ; ce n'est pas un recouvrement de titres "
+                   "confirmé (aucune composition d'indice historique n'est utilisée).", 520)
+
+
+def risk_contribution_chart(contributions: pd.DataFrame, *, asset_order: Sequence[str] | None = None,
+                            title: str = "D'où vient le risque ? Contributions au risque par portefeuille") -> go.Figure:
+    """Horizontal 100% stacked bars of variance contributions (rows = portfolios, columns = assets)."""
+    palette = colors_for(list(contributions.columns), asset_order)
+    fig = go.Figure()
+    rows = [fr(i) for i in contributions.index][::-1]
+    for asset in contributions.columns:
+        values = contributions[asset].to_numpy()[::-1]
+        fig.add_trace(go.Bar(y=rows, x=values, name=fr(asset), orientation="h",
+                             marker=dict(color=palette[asset], line=dict(color="white", width=2)),
+                             text=[f"{v:.0%}" if v >= .06 else "" for v in values], textposition="inside",
+                             textfont=dict(color="white", size=11),
+                             hovertemplate=f"<b>{fr(asset)}</b><br>%{{y}} : %{{x:.1%}} du risque<extra></extra>"))
+    fig.update_layout(barmode="stack", bargap=.35)
+    fig.update_xaxes(tickformat=".0%", range=[0, 1], title="Part de la variance du portefeuille")
+    return _layout(fig, title, "Covariance fixe de la période de développement (2001–2012).",
+                   max(320, 70 + 46 * len(rows)))

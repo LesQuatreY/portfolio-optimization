@@ -50,7 +50,8 @@ def code_version(project_dir: Path) -> dict:
     """Git commit and whether tracked files had uncommitted changes (None when unavailable)."""
     def git(*args):
         try:
-            done = subprocess.run(["git", *args], cwd=project_dir, capture_output=True, text=True, timeout=10)
+            done = subprocess.run(["git", *args], cwd=project_dir, capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace", timeout=10)
         except (OSError, subprocess.SubprocessError):
             return None
         return done.stdout.strip() if done.returncode == 0 else None
@@ -131,7 +132,8 @@ def record_experiment(result, research, *, label: str, notes: str = "", project_
 RESULT_KEYS = ("config", "evaluated_universe", "policies", "benchmark", "walk_forward_used")
 _LEVERAGE_KEYS = ("leverage_annual_fee", "leverage_financing_rate", "leverage_financing_spread", "financing_series")
 # Fields added after some registry entries were written, with the value equivalent to their absence.
-_LEGACY_DEFAULTS = {"growth_drift": "sample", "min_weights": [], "holding_costs": [], "risk_free_series": None,
+_LEGACY_DEFAULTS = {"growth_drift": "sample", "resampling_draws": 0, "min_weights": [], "holding_costs": [],
+                    "risk_free_series": None,
                     "financing_series": [], "leverage_financing_spread": 0.}
 
 

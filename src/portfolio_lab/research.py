@@ -62,8 +62,9 @@ class ResearchConfig:
     def methods(self) -> dict[str, Config]:
         """Config of each pre-registered estimation-method variant (only estimation fields change)."""
         keys = {"expected_returns": "expected_return_method", "growth_drift": "growth_drift",
-                "covariance": "covariance_method"}
-        return {label: replace(self.config, **{keys[k]: v for k, v in overrides})
+                "covariance": "covariance_method", "resampling_draws": "resampling_draws"}
+        return {label: replace(self.config, **{keys[k]: (int(v) if k == "resampling_draws" else v)
+                                               for k, v in overrides})
                 for label, overrides in self.method_variants} or {"Référence": self.config}
 
     def variants(self) -> dict[str, dict[str, tuple[str, ...]]]:
@@ -232,7 +233,7 @@ def parse_research_config(raw: Mapping, project_dir: Path = Path("."), source: P
     methods = []
     for label, overrides in _mapping(raw, "method_variants").items():
         overrides = dict(overrides or {})
-        if set(overrides) - {"expected_returns", "growth_drift", "covariance"}:
+        if set(overrides) - {"expected_returns", "growth_drift", "covariance", "resampling_draws"}:
             raise ValueError(f"research config: method '{label}' may only override estimation keys.")
         methods.append((str(label), tuple(sorted((str(k), str(v)) for k, v in overrides.items()))))
     provenance = str(constraints.get("provenance", "")).strip()
@@ -277,6 +278,15 @@ class ResearchStudy:
 
     def development_prices(self) -> pd.DataFrame:
         return self.prices.loc[self.prices.index < pd.Timestamp(self.config.development_end)]
+
+    def reference_covariance(self, assets=None) -> pd.DataFrame:
+        """Fixed Ledoit-Wolf covariance of the development period (before validation), used to measure
+        exposure changes in risk units independently of each fold's own estimate."""
+        from .covariance import estimate_covariance
+        from .returns import simple_returns
+        dev = self.development_prices()
+        dev = dev if assets is None else dev[list(assets)]
+        return estimate_covariance(simple_returns(dev), "ledoit_wolf", self.config.trading_days).matrix
 
 
 def build_rates(config: Config, provider=None):

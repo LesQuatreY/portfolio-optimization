@@ -87,11 +87,15 @@ estimation:
   expected_returns: sample       # sample | bayes_stein
   growth_drift: sample           # sample | estimated (growth objective re-centred on expected_returns)
 
-# Pre-registered estimation-method variants (phase 5 plan), compared on the main universe only.
-# Each entry overrides `estimation` keys; {} is the reference method above.
+# Pre-registered estimation-method variants, compared on the main universe only. Each entry overrides
+# estimation keys ({} = reference). Phase 6 plan (docs/PHASE6_RESEARCH_PLAN.md): anchored expected
+# returns (Black-Litterman, ERC equilibrium, tau = 1/T) and resampled efficiency (Michaud, 50 draws).
+# The phase-5 Bayes-Stein variant ({expected_returns: bayes_stein, growth_drift: estimated}) is not
+# re-run; its results stay in the registry and docs/PHASE5_RESULTS.md.
 method_variants:
   Moyenne historique (référence): {}
-  Bayes-Stein (dérive rétrécie): {expected_returns: bayes_stein, growth_drift: estimated}
+  Rendements ancrés (Black-Litterman, ancre ERC): {expected_returns: anchored, growth_drift: estimated}
+  Frontière rééchantillonnée (Michaud, 50 tirages): {resampling_draws: 50}
 
 # Risk profiles: ceilings on the ESTIMATED annualized volatility (ex-ante, training data).
 # They are not drawdown limits and give no guarantee on future volatility or losses.

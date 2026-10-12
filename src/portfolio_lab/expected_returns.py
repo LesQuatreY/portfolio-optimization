@@ -22,7 +22,8 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-EXPECTED_RETURN_METHODS = {"bayes_stein": "Bayes-Stein (Jorion 1986)", "sample": "Sample mean"}
+EXPECTED_RETURN_METHODS = {"bayes_stein": "Bayes-Stein (Jorion 1986)", "sample": "Sample mean",
+                           "anchored": "Anchored (Black-Litterman, ERC equilibrium)"}
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,9 @@ def estimate_expected_returns(returns: pd.DataFrame, method: str = "sample",
     if len(returns) < 2 or not np.isfinite(values).all():
         raise ValueError("Expected returns need at least two finite return observations.")
     mean = values.mean(axis=0)
+    if method == "anchored":
+        raise ValueError("Anchored expected returns need an anchor portfolio: use anchored_expected_returns "
+                         "(PortfolioOptimizer builds it from the window's equal risk contribution portfolio).")
     if method == "sample":
         return ExpectedReturnEstimate(pd.Series(mean * trading_days, index=returns.columns), method)
     t, n = values.shape
@@ -71,3 +75,42 @@ def estimate_expected_returns(returns: pd.DataFrame, method: str = "sample",
     if not np.isfinite(annual.to_numpy()).all() or not 0 <= shrinkage <= 1:
         raise ValueError("Bayes-Stein estimate is not finite.")
     return ExpectedReturnEstimate(annual, method, float(shrinkage), target * trading_days)
+
+
+def anchored_expected_returns(returns: pd.DataFrame, sigma_annual: pd.DataFrame, anchor: pd.Series,
+                              trading_days: int = 252) -> ExpectedReturnEstimate:
+    """Black-Litterman posterior mean with a neutral equilibrium prior implied by an anchor portfolio.
+
+    All quantities in daily units, from the given (training) returns only:
+
+        Sigma  = sigma_annual / trading_days                       risk model of the optimizer
+        delta  = m' w_a / (w_a' Sigma w_a)                         anchor's implied return = its sample mean
+        pi     = delta * Sigma w_a                                 equilibrium (prior) means
+        Omega  = diag(Sigma) / T,  tau * Sigma with tau = 1 / T    view and prior uncertainty
+        mu     = (Sigma^-1 + diag(Sigma)^-1)^-1 (Sigma^-1 pi + diag(Sigma)^-1 m)      (T cancels)
+
+    The prior differs by asset and its precision Sigma^-1 is large on differences between highly
+    correlated assets, so their noisy mean gaps are pulled toward equilibrium gaps; unlike a common
+    shrinkage target, this changes relative expected returns and hence volatility-constrained portfolios.
+    `shrinkage` reports delta; `target` the anchor's annualized implied return.
+    """
+    values = returns.to_numpy(dtype=float)
+    if len(returns) < 2 or not np.isfinite(values).all():
+        raise ValueError("Anchored expected returns need at least two finite return observations.")
+    w = anchor.reindex(returns.columns).to_numpy(dtype=float)
+    if not np.isfinite(w).all() or abs(w.sum() - 1) > 1e-8:
+        raise ValueError("The anchor must be a fully invested portfolio over the same assets.")
+    sigma = sigma_annual.reindex(index=returns.columns, columns=returns.columns).to_numpy() / trading_days
+    m = values.mean(axis=0)
+    anchor_variance = float(w @ sigma @ w)
+    if anchor_variance <= 0:
+        raise ValueError("The anchor must have positive variance.")
+    delta = float(m @ w) / anchor_variance
+    pi = delta * sigma @ w
+    prior_precision = np.linalg.inv(sigma)
+    view_precision = np.diag(1 / np.diag(sigma))
+    posterior = np.linalg.solve(prior_precision + view_precision, prior_precision @ pi + view_precision @ m)
+    annual = pd.Series(posterior * trading_days, index=returns.columns)
+    if not np.isfinite(annual.to_numpy()).all():
+        raise ValueError("Anchored expected returns are not finite.")
+    return ExpectedReturnEstimate(annual, "anchored", delta, float(m @ w) * trading_days)

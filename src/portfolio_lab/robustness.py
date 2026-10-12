@@ -84,7 +84,11 @@ def fit_policies(train_prices: pd.DataFrame, config: Config, risk_profiles: bool
     Risk profiles maximize historical log growth under their estimated-volatility ceiling
     (the frontier rule). Pre-specified fallback: when a ceiling is below the training
     window's minimum achievable volatility, the policy holds Minimum Volatility (flagged).
+    With `config.resampling_draws > 0`, every policy is the average of its weights over that many
+    stationary-bootstrap resamples of the training window (resampled efficiency, Michaud).
     """
+    if config.resampling_draws:
+        return _resampled_policies(train_prices, config, risk_profiles, risk_parity)
     optimizer = PortfolioOptimizer(train_prices, config)
     core = optimizer.core_portfolios()
     fitted = {name: core[name] for name in OPTIMIZED}
@@ -112,6 +116,51 @@ def fit_policies(train_prices: pd.DataFrame, config: Config, risk_profiles: bool
                               ("Expected-return shrinkage", optimizer.expected.shrinkage)):
         metrics[column] = np.nan if shrinkage is None else shrinkage
     return {name: p["weights"] for name, p in fitted.items()}, metrics
+
+
+def _resampled_policies(train_prices: pd.DataFrame, config: Config, risk_profiles: bool, risk_parity: bool):
+    """Average each policy's optimal weights over stationary-bootstrap resamples of the training window.
+
+    Whole dates are resampled jointly (Politis-White block length of the training returns). The seed is
+    the training end date (YYYYMMDD), so a given window always gives the same draws. The averaged weights
+    stay within the investor bounds (convex set). Reported metrics are those of the averaged weights on
+    the actual training data; boolean flags become the share of resamples in which they occurred.
+    """
+    from .bootstrap import bootstrap_indices, resampled_prices, stationary_block_length
+    base = replace(config, resampling_draws=0)
+    returns = simple_returns(train_prices)
+    seed = int(train_prices.index[-1].strftime("%Y%m%d"))
+    indices = bootstrap_indices(len(returns), stationary_block_length(returns), config.resampling_draws, seed)
+    point_weights, point_metrics = fit_policies(train_prices, base, risk_profiles, risk_parity)
+    sums = {name: np.zeros(train_prices.shape[1]) for name in point_weights}
+    flags = {column: pd.Series(0., index=point_metrics.index) for column in
+             ("Fallback to Minimum Volatility", "Ceiling not binding (Maximum CAGR)")}
+    used = 0
+    for row in indices:
+        try:
+            weights, metrics = fit_policies(resampled_prices(train_prices, row), base, risk_profiles, risk_parity)
+        except (RuntimeError, ValueError):
+            continue
+        used += 1
+        for name in sums:
+            sums[name] += weights[name].reindex(train_prices.columns).to_numpy()
+        for column in flags:
+            flags[column] += metrics[column].astype(float)
+    if not used:
+        raise RuntimeError("Every resampled optimization failed.")
+    optimizer = PortfolioOptimizer(train_prices, base)
+    averaged = {name: pd.Series(total / used, index=train_prices.columns) for name, total in sums.items()}
+    keys = ("CAGR", "Volatility", "Estimated volatility", "Sharpe", "Max Drawdown")
+    metrics = pd.DataFrame({name: {k: optimizer.metrics(w.to_numpy())[k] for k in keys}
+                            for name, w in averaged.items()}).T
+    for column, total in flags.items():
+        metrics[column] = total / used
+    for column in ("Feasible minimum volatility", "Maximum-growth volatility", "Covariance shrinkage",
+                   "Expected-return shrinkage"):
+        if column in point_metrics:
+            metrics[column] = point_metrics[column]
+    metrics["Resamples used"] = used
+    return averaged, metrics
 
 
 def hhi(weights: pd.DataFrame) -> pd.Series:

@@ -99,6 +99,9 @@ class Config:
     # historical returns (reference); "estimated" = training returns re-centred on the configured
     # expected returns (e.g. Bayes-Stein), r~_t = r_t - mean(r) + mu, leaving risk and path shape unchanged.
     growth_drift: str = "sample"
+    # Resampled-efficiency policies (Michaud): average each policy's optimal weights over this many
+    # stationary-bootstrap resamples of the training window (0 = off). A Monte Carlo size, not a tuning knob.
+    resampling_draws: int = 0
     trading_days: int = 252
     calendar_days_per_year: float = 365.25
     risk_free_rate: float = 0.
@@ -147,6 +150,8 @@ class Config:
         validate_expected_return_method(self.expected_return_method)
         if self.growth_drift not in ("sample", "estimated"):
             raise ValueError("growth_drift must be 'sample' or 'estimated'.")
+        if isinstance(self.resampling_draws, bool) or not isinstance(self.resampling_draws, int)                 or self.resampling_draws < 0:
+            raise ValueError("resampling_draws must be a nonnegative integer.")
         if self.base_currency != "EUR":
             raise ValueError("This study supports EUR as base currency.")
         if not isinstance(self.include_leveraged_in_frontier, bool):

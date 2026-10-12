@@ -130,7 +130,8 @@ def bootstrap_frontier(prices: pd.DataFrame, config: Config, replications: int =
     point = core["Maximum Sharpe"]["weights"].to_numpy()
     indices = bootstrap_indices(len(returns), block, replications, seed)
     # Indices are drawn up front from one seed, so results do not depend on the worker count.
-    workers = 1 if replications < 8 else (workers or os.cpu_count() or 1)
+    # At most 4 processes: each loads SciPy, and one per core exhausted virtual memory on this machine.
+    workers = 1 if replications < 8 else (workers or min(4, os.cpu_count() or 1))
     chunks = np.array_split(indices, min(workers, replications))
     if workers > 1:
         with ProcessPoolExecutor(max_workers=workers, initializer=_single_threaded_worker) as pool:

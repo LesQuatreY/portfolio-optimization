@@ -84,8 +84,16 @@ def realized_risk(result, trading_days: int = 252) -> pd.DataFrame:
     return pd.DataFrame(rows).set_index(["Policy", "Year"])
 
 
-def stability_table(result, strategies=None) -> pd.DataFrame:
-    """One row per strategy: target changes, traded turnover, concentration, switches, leverage weight."""
+def _risk_gap(a: pd.Series, b: pd.Series, sigma) -> float:
+    from .diagnostics import risk_distance
+    return risk_distance(a, b, sigma)
+
+
+def stability_table(result, strategies=None, sigma: pd.DataFrame | None = None) -> pd.DataFrame:
+    """One row per strategy: target changes, traded turnover, concentration, switches, leverage weight.
+
+    With a fixed covariance `sigma`, also the mean risk distance between consecutive targets (exposure
+    change, as opposed to instrument change)."""
     strategies = list(result.strategies) if strategies is None else list(strategies)
     risk = realized_risk(result)
     rows = {}
@@ -103,6 +111,10 @@ def stability_table(result, strategies=None) -> pd.DataFrame:
                "Zero/large switches": len(zero_large_switches(weights)),
                "Persistent holdings": ", ".join(persistent_holdings(weights)) or "—",
                "Mean leveraged weight": weights[levered].sum(axis=1).mean() if levered else 0.}
+        if sigma is not None:
+            years = list(weights.index)
+            gaps = [_risk_gap(weights.loc[y], weights.loc[p], sigma) for p, y in zip(years, years[1:])]
+            row["Mean risk distance"] = float(np.mean(gaps)) if gaps else np.nan
         if name in result.policies:
             row["Mean estimated volatility"] = risk.loc[name, "Estimated volatility"].mean()
             row["Mean realized volatility (yearly)"] = risk.loc[name, "Realized volatility"].mean()
@@ -110,7 +122,8 @@ def stability_table(result, strategies=None) -> pd.DataFrame:
     return pd.DataFrame(rows).T.rename_axis("Strategy")
 
 
-def window_sensitivity(primary, alternative, policies=None) -> tuple[pd.DataFrame, pd.DataFrame]:
+def window_sensitivity(primary, alternative, policies=None, sigma: pd.DataFrame | None = None
+                       ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Weight distance 0.5 * sum|w_primary - w_alternative| per policy and year, and a summary that puts
     weight sensitivity next to performance sensitivity (both runs share test years and costs)."""
     policies = primary.policies if policies is None else list(policies)
@@ -119,7 +132,10 @@ def window_sensitivity(primary, alternative, policies=None) -> tuple[pd.DataFram
     rows = {}
     for p in policies:
         levered = [c for c in primary.weights[p].columns if " x" in c]
+        risk_gap = (np.mean([_risk_gap(primary.weights[p].loc[y], alternative.weights[p].loc[y], sigma)
+                             for y in primary.weights[p].index]) if sigma is not None else np.nan)
         rows[p] = {"Mean weight distance": distance[p].mean(), "Max weight distance": distance[p].max(),
+                   "Mean risk distance": risk_gap,
                    "CAGR (primary)": primary.metrics.loc[p, "CAGR"],
                    "CAGR (alternative)": alternative.metrics.loc[p, "CAGR"],
                    "Volatility (primary)": primary.metrics.loc[p, "Volatility annualized"],
@@ -142,10 +158,14 @@ class WeightSensitivity:
     distance: pd.DataFrame       # mean 0.5 * sum|w_b - w_hat| per (year) x policy
     ranges: pd.DataFrame         # per (policy, asset): mean point weight, mean P5, mean P95 over folds
     failures: int
+    risk_distance: pd.DataFrame | None = None   # mean sqrt(dw' Sigma dw) per (year) x policy, fixed Sigma
 
     def summary(self) -> pd.DataFrame:
-        return pd.DataFrame({"Mean bootstrap distance": self.distance.mean(),
-                             "Max bootstrap distance": self.distance.max()}).rename_axis("Policy")
+        table = pd.DataFrame({"Mean bootstrap distance": self.distance.mean(),
+                              "Max bootstrap distance": self.distance.max()})
+        if self.risk_distance is not None:
+            table["Mean bootstrap risk distance"] = self.risk_distance.mean()
+        return table.rename_axis("Policy")
 
 
 def _refit_chunk(train, config, risk_profiles, policies, rows):
@@ -166,7 +186,8 @@ def _single_threaded():
 
 
 def training_bootstrap(prices: pd.DataFrame, config, result, *, replications: int = 40, seed: int = 0,
-                       rates=None, risk_profiles: bool = True, workers: int | None = None) -> WeightSensitivity:
+                       rates=None, risk_profiles: bool = True, workers: int | None = None,
+                       sigma: pd.DataFrame | None = None) -> WeightSensitivity:
     """Refit each fold's policies on stationary-bootstrap resamples of that fold's training data only.
 
     Whole dates are resampled jointly (cross-asset dependence kept), with the expected block length
@@ -177,7 +198,7 @@ def training_bootstrap(prices: pd.DataFrame, config, result, *, replications: in
     policies = list(result.policies)
     # Few processes: each worker loads SciPy, and one per core exhausted virtual memory on this machine.
     workers = workers or min(4, os.cpu_count() or 1)
-    draws, distances, blocks, failures = [], {}, {}, 0
+    draws, distances, risk_gaps, blocks, failures = [], {}, {}, {}, 0
     for fold in result.folds:
         train = universe.loc[(universe.index >= fold.return_base) & (universe.index <= fold.train_end)]
         if train.index[-1] >= fold.test_start:
@@ -198,13 +219,18 @@ def training_bootstrap(prices: pd.DataFrame, config, result, *, replications: in
         failures += sum(fit is None for fit in fits)
         for policy in policies:
             point = result.weights[policy].loc[fold.test_year].reindex(universe.columns).to_numpy()
-            gaps = []
+            gaps, rgaps = [], []
             for b, fit in enumerate(fits):
                 if fit is None:
                     continue
                 draws.append(pd.Series(fit[policy], index=universe.columns, name=(policy, fold.test_year, b)))
                 gaps.append(0.5 * np.abs(fit[policy] - point).sum())
+                if sigma is not None:
+                    rgaps.append(_risk_gap(pd.Series(fit[policy], index=universe.columns),
+                                           pd.Series(point, index=universe.columns), sigma))
             distances.setdefault(policy, {})[fold.test_year] = float(np.mean(gaps)) if gaps else np.nan
+            if sigma is not None:
+                risk_gaps.setdefault(policy, {})[fold.test_year] = float(np.mean(rgaps)) if rgaps else np.nan
     draws = pd.DataFrame(draws)
     draws.index = pd.MultiIndex.from_tuples(draws.index, names=["Policy", "Year", "Replication"])
     ranges = {}
@@ -217,15 +243,16 @@ def training_bootstrap(prices: pd.DataFrame, config, result, *, replications: in
             ranges[(policy, asset)] = {"Mean point weight": point[asset], "Mean P5": p5[asset], "Mean P95": p95[asset]}
     return WeightSensitivity(replications, seed, pd.Series(blocks, name="Expected block length"), draws,
                              pd.DataFrame(distances).rename_axis("Test year"),
-                             pd.DataFrame(ranges).T.rename_axis(["Policy", "Asset"]), failures)
+                             pd.DataFrame(ranges).T.rename_axis(["Policy", "Asset"]), failures,
+                             pd.DataFrame(risk_gaps).rename_axis("Test year") if sigma is not None else None)
 
 
-def research_summary(result, alternative=None, sensitivity=None, reference: str = "Constrained Equal Weight"
-                     ) -> pd.DataFrame:
+def research_summary(result, alternative=None, sensitivity=None, reference: str = "Constrained Equal Weight",
+                     sigma: pd.DataFrame | None = None) -> pd.DataFrame:
     """Performance and stability side by side, one row per strategy (raw values, no composite score)."""
     from .robustness import leave_one_year_out
     perf = result.summary()
-    stab = stability_table(result)
+    stab = stability_table(result, sigma=sigma)
     table = pd.DataFrame(index=list(result.strategies) + ([result.benchmark] if result.benchmark else []))
     for column in ("CAGR", "Volatility annualized", "Max Drawdown", "Sharpe", "CAGR excluding best year"):
         table[column] = perf[column]
@@ -239,12 +266,18 @@ def research_summary(result, alternative=None, sensitivity=None, reference: str 
     for column in ("Mean target change", "Mean traded turnover", "Mean max weight", "Mean effective assets",
                    "Zero/large switches", "Mean leveraged weight", "Mean estimated volatility"):
         table[column] = stab[column]
+    if sigma is not None:
+        table["Mean risk distance"] = stab["Mean risk distance"]
     if alternative is not None:
-        distance, _ = window_sensitivity(result, alternative)
+        distance, window = window_sensitivity(result, alternative, sigma=sigma)
         table["Mean weight distance rolling vs expanding"] = distance.mean()
+        if sigma is not None:
+            table["Mean risk distance rolling vs expanding"] = window["Mean risk distance"]
         table["CAGR (expanding window)"] = alternative.metrics["CAGR"]
     if sensitivity is not None:
         table["Mean bootstrap weight distance"] = sensitivity.distance.mean()
+        if sensitivity.risk_distance is not None:
+            table["Mean bootstrap risk distance"] = sensitivity.risk_distance.mean()
     return table
 
 
