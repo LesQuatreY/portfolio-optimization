@@ -1,0 +1,118 @@
+# Portfolio Lab V2 — lignes des courbes gelées (curves_FULL.parquet) : libellés, enveloppe et provenance.
+#
+# Chaque clé est une colonne de valeur (EUR) de curves_FULL.parquet. La somme des lignes est égale à la
+# colonne « total » (contrôlé à chaque chargement et par les tests).
+#
+# provenance :
+#   observe      cours réels de l'instrument sur toute la fenêtre 2014-10-01 → 2023-12-29
+#   proxy        série reconstituée à partir d'un autre instrument ou indice (historique réel absent)
+#   synthetique  série calculée à partir d'un taux (aucun cours de marché)
+#   comptable    liquidités (aucun risque de marché)
+#
+# Sources : config_v10.json (series, instruments), v11data.instrument_series_v11 et
+# research_v8_global/data_quality.py de Portfolio Research (fenêtre P_PROXY).
+
+groups:            # ordre d'empilement des graphiques d'allocation (du bas vers le haut)
+  nasdaq_x2: Nasdaq-100 ×2 (LQQ)
+  nasdaq_x1: Nasdaq-100 ×1 (PUST)
+  staples: Consommation de base US
+  gold: Or
+  bonds: Obligations € 1–3 ans
+  bitcoin: Bitcoin
+  money_market: Monétaire
+  cash: Liquidités
+  life_insurance: Assurance-vie (BoursoVie)
+
+wrappers:          # ordre d'empilement par enveloppe
+  PEA: PEA (Bourse Direct)
+  CTO: CTO (Bourse Direct)
+  BTC: Bitcoin auto-conservé
+  AV: Assurance-vie (BoursoVie)
+
+lines:
+  pea_LQQ:
+    label: Nasdaq-100 ×2 — LQQ
+    group: nasdaq_x2
+    wrapper: PEA
+    isin: FR0010342592
+    provenance: observe
+    source: Cours réels LQQ (Euronext Paris, Yahoo LQQ.PA, ajustés de la division d'actions).
+  pea_PUST:
+    label: Nasdaq-100 ×1 — PUST
+    group: nasdaq_x1
+    wrapper: PEA
+    isin: FR0011871110
+    provenance: observe
+    source: Cours réels PUST (Euronext Paris, Yahoo PUST.PA).
+  pea_STAPLES_PEA:
+    label: Consommation de base US — COSE (PEA)
+    group: staples
+    wrapper: PEA
+    isin: FR001400KE06
+    provenance: proxy
+    source: >-
+      Proxy : XLP (rendement total, converti en EUR à la clôture US de la veille) − 0,35 %/an. COSE n'a pas
+      d'historique sur 2014–2023 et son indice ESG à 17 titres n'est pas reproduit.
+  pea_MM_PEA:
+    label: Monétaire PEA
+    group: money_market
+    wrapper: PEA
+    isin: FR0013346681
+    provenance: synthetique
+    source: Série synthétique — taux EONIA/€STR capitalisé, diminué de 0,25 %/an de frais.
+  cash_pea:
+    label: Liquidités PEA
+    group: cash
+    wrapper: PEA
+    provenance: comptable
+    source: Espèces non investies du PEA (rémunération nulle).
+  cto_GOLD:
+    label: Or — Amundi Physical Gold (CTO)
+    group: gold
+    wrapper: CTO
+    isin: FR0013416716
+    provenance: proxy
+    source: >-
+      Proxy sur toute la fenêtre : GLD converti en EUR (clôture US de la veille / EURUSD de la veille) ;
+      l'ETC réel n'existe qu'à partir de 2019.
+  cto_STAPLES_CTO:
+    label: Consommation de base US — iShares (CTO)
+    group: staples
+    wrapper: CTO
+    isin: IE00B40B8R38
+    provenance: proxy
+    source: >-
+      Proxy : XLP (rendement total, converti en EUR à la clôture US de la veille), sans ajustement.
+  cto_BOND_SHORT:
+    label: Obligations d'État zone euro 1–3 ans — Xtrackers (CTO)
+    group: bonds
+    wrapper: CTO
+    isin: LU0290356871
+    provenance: observe
+    source: Cours réels DBXP (Xetra).
+  cto_cash:
+    label: Liquidités CTO
+    group: cash
+    wrapper: CTO
+    provenance: comptable
+    source: Espèces du CTO, dont la réserve pour impôts (rémunération nulle).
+  btc:
+    label: Bitcoin (auto-conservé)
+    group: bitcoin
+    wrapper: BTC
+    provenance: observe
+    source: >-
+      BTC-EUR (agrégat Yahoo/CoinMarketCap, clôture 00:00 UTC) ; l'historique 2014–2016 provient de
+      marchés plus étroits.
+  btc_cash:
+    label: Liquidités issues des ventes de Bitcoin
+    group: cash
+    wrapper: BTC
+    provenance: comptable
+    source: Produit des ventes de Bitcoin en attente d'affectation (hors PEA, rémunération nulle).
+  av:
+    label: Assurance-vie BoursoVie (Nasdaq-100)
+    group: life_insurance
+    wrapper: AV
+    provenance: proxy
+    source: Contrat existant modélisé comme Nasdaq-100 (QQQ en EUR) ; nul dans les simulations N100.

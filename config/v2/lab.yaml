@@ -1,0 +1,125 @@
+# Portfolio Lab V2 — contexte de données isolé (stratégies gelées de Portfolio Research)
+#
+# Ce fichier est lu par portfolio_lab.v2 (settings.load_settings) ; chaque valeur est validée
+# (clé inconnue, empreinte manquante ou date de coupure au-delà du 29/12/2023 => erreur explicite).
+#
+# Rappels :
+# * Portfolio Research est en LECTURE SEULE. Seuls les artefacts listés ci-dessous peuvent être lus,
+#   et seulement si leur empreinte SHA-256 est identique à la version gelée.
+# * La période TEST 2024–2026 est verrouillée : aucun artefact ne peut contenir de date postérieure
+#   au 29/12/2023. Cette limite est aussi codée en dur (portfolio_lab/v2/guard.py) : aucun réglage
+#   de ce fichier ne peut la lever.
+# * Ce contexte V2 est indépendant de l'optimiseur V1 (config/research.yaml, verrou 2020) :
+#   les deux jeux de données ne sont jamais mélangés.
+
+research:
+  # Dossier Portfolio Research, relatif à la racine de ce projet (ou chemin absolu).
+  root: ../Draft/nasdaq_dynamic_exposure_v0
+  cutoff: 2023-12-29            # dernière date de développement autorisée (jamais au-delà)
+  start: 2014-10-01             # première séance des simulations gelées (fenêtre FULL)
+  initial_capital: 100000       # capital normalisé N100 des simulations Research (EUR)
+  currency: EUR
+  # Référence documentaire du registre d'origine. Non ouvert par V2 : seuls les artefacts autorisés
+  # ci-dessous sont lus ; les tests de non-modification comparent leurs empreintes avant/après.
+  hash_record: research_final_validation_n07/FREEZE_PROTOCOL.json
+
+# Liste d'autorisation : nom logique -> chemin relatif à research.root + empreinte SHA-256 gelée.
+# Les dix premières empreintes figurent aussi dans explorer_v11_3/ARTIFACT_HASHES.json ; toutes figurent
+# dans le registre hash_record ci-dessus.
+artifacts:
+  manifest:
+    path: research_v11_multi_asset_optimization/stability_v11_2/FROZEN_STRATEGY_MANIFEST.csv
+    sha256: 2c7fc831237a8c96f8cc1ed3ce6709a495f98a87d8e50bb6b05e5f7e8dad0d24
+  protocol:
+    path: research_v11_multi_asset_optimization/stability_v11_2/protocol_v11_2.json
+    sha256: 974d7a1042f462d40fdcc8c2cbf9293b8107f6ace644312cd75800d077d2c2dd
+  master:
+    path: research_v11_multi_asset_optimization/stability_v11_2/outputs/historical_master_v11_2.csv
+    sha256: 50583b3dde2211679d4a5f92ab572d515eb509112ff493bbf3dbe8609ae4bb3a
+  curves:
+    path: research_v11_multi_asset_optimization/stability_v11_2/outputs/curves_FULL.parquet
+    sha256: 8127371fbd41bbb762876452b07c9f0598cc447e43bedd32adf26f7469f464c8
+  rolling:
+    path: research_v11_multi_asset_optimization/stability_v11_2/outputs/rolling_metrics.parquet
+    sha256: 37ef802e0be8e3fb1692023427d5cf2938682ce5eafe0df9cbfd8c82fff3f295
+  calendar:
+    path: research_v11_multi_asset_optimization/stability_v11_2/outputs/calendar_years.csv
+    sha256: 22488837242d78e63650d90a411389eabdf9a39913ddbc00514e2cf1fff144bc
+  chrono:
+    path: research_v11_multi_asset_optimization/stability_v11_2/outputs/chronological_summary.csv
+    sha256: f0498399590864006e94c091905aab4f875ba76de6430c13038d210af3f5c7e0
+  regimes:
+    path: research_v11_multi_asset_optimization/stability_v11_2/outputs/regimes.csv
+    sha256: 7a34fba64d3f9f1e7fe9256add07860f44c7e70397e5b3a66105d638d79e2e8c
+  classification:
+    path: research_v11_multi_asset_optimization/stability_v11_2/outputs/classification.csv
+    sha256: 2d24570f1d5eece68f8086278a94a3535e5ebb073e91479448b098bc92bf6c8e
+  cards:
+    path: research_v11_multi_asset_optimization/explorer_v11_3/strategy_cards_fr.yaml
+    sha256: 47847a56e5afe36b7e59043ae95a64ab37509a2ffc4949014e4382b0758a0c42
+  market:
+    path: research_v11_multi_asset_optimization/stability_v11_2/outputs/market_FULL.parquet
+    sha256: 6326956efb106cdff33bf920117dc68279e74a3dcd013eedfc1d39567d6fe88d
+  crises:
+    path: research_v11_multi_asset_optimization/stability_v11_2/outputs/crisis_summary.csv
+    sha256: 4b3b74659106443dcdb14eddbb964f89d10c2349fefd30895645c8d44422c1b0
+
+# Jamais lisibles, même s'ils étaient ajoutés par erreur à la liste ci-dessus (données postérieures
+# au 29/12/2023, allocation réelle, étude V0 jusqu'en 2026). Chemins relatifs à research.root.
+forbidden:
+  - data/yahoo_daily_v0_amended.parquet
+  - data/irx_daily.parquet
+  - reports
+  - ops
+
+# Portefeuilles intégrés, dans l'ordre d'affichage (l'ordre fixe la couleur de chaque stratégie).
+# Définitions, configurations et résultats : FROZEN_STRATEGY_MANIFEST.csv (source de vérité).
+# config_sha256 = empreinte de la configuration gelée du manifeste, revérifiée au chargement.
+strategies:
+  N07:
+    kind: strategy
+    role: Candidat principal très agressif
+    config_sha256: 03b452474dfdc2a83b30d52976308bc7eccb061113d14c0dcfdb0289325cd08d
+  D2_25:
+    kind: strategy
+    role: Exposition dynamique agressive
+    config_sha256: a8c46b58cc8cbec3a8a4a45be1439f4a11f84fe583a9482d5f8bb65368f16b6f
+  D2_10:
+    kind: strategy
+    role: Exposition dynamique plus prudente
+    config_sha256: e7940c51a96707070781f5d2d0a7884872ed3e5413a13c8c2086fc123f6d749a
+  S056:
+    kind: strategy
+    role: Nasdaq à levier statique avec réserve monétaire
+    config_sha256: c4be756e5530d56918c861c3ea6aef81a05cbad46c3dc9012225aaae11357d77
+  S054:
+    kind: strategy
+    role: Allocation multi-actifs défensive
+    config_sha256: 0851cd2ea9ec8b13e6d1abf7d74bd68312fdd75ea8a7793d8efe48d1b3207d85
+  G03:
+    kind: strategy
+    role: Nasdaq + consommation de base défensive (PEA)
+    config_sha256: 537f07c55412b5e564489c620d29fd8dcc5c726ed11e9c6f41da3687c4d06204
+  G04:
+    kind: strategy
+    role: Variante d'enveloppe de G03 (consommation de base au CTO)
+    config_sha256: c722f3d19f805ae4ce9de475df52816a86562d47471f52981068005588a63a37
+  B1:
+    kind: benchmark
+    role: Référence permanente — Nasdaq ×1, achat-conservation
+    config_sha256: b002a1b8fe339426216e5acaaea49df54813219de2cc38dbf321363babda5c37
+  B2:
+    kind: benchmark
+    role: Référence permanente — Nasdaq ×2, achat-conservation
+    config_sha256: 3cd053931b6c7052c267ca43341bc929ee98774b3720b248b8d879040a141b75
+  B1M:
+    kind: benchmark
+    role: Référence permanente — Nasdaq ×1 + 5 % or + 5 % Bitcoin
+    config_sha256: 9b3796dc53c2a3113a59ac57ad3501d1d11c7deefff5dd77d90e8c9c0371b163
+  B2M:
+    kind: benchmark
+    role: Référence permanente — Nasdaq ×2 + 5 % or + 5 % Bitcoin
+    config_sha256: f22c5bf1392ccb2d074cc51a38fd86ce1b4ce68e8d04afeabe11ba814732f780
+
+# Sélection affichée à l'ouverture des notebooks (modifiable ici ou avec les boutons).
+default_selection: [N07, D2_25, D2_10, S054, B1, B1M]
