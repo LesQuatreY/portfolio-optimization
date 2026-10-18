@@ -23,6 +23,9 @@ Dans JupyterLab, choisir le noyau de cet environnement et **Run → Run All Cell
 | [01 — Comparaison](notebooks/01_comparaison_strategies.ipynb) | Commencer ici : indicateurs, rendement/risque, patrimoine et drawdowns, fiches, méthode |
 | [02 — Robustesse historique](notebooks/02_robustesse_historique.ipynb) | Rendements glissants, DEV/EVAL, années et régimes, crises, récupération |
 | [03 — Allocations et enveloppes](notebooks/03_allocations_enveloppes.ipynb) | Poids comptables, exposition économique, frais, impôts et provenance |
+| [04 — Portefeuilles personnalisés](notebooks/04_portefeuilles_personnalises.ipynb) | V2.1 : éditeur, configurations JSON et moteur ; historique à six actifs bloqué jusqu'à validation des données |
+
+La V2.1 est décrite dans le [guide du constructeur](docs/V2_1_GUIDE.md). Le portefeuille initial conserve ses six poids. Le CAC 40 à rendement total manque et les cinq autres sources restent candidates à valider indépendamment : aucune performance historique complète n'est annoncée. L'éditeur et les tests synthétiques fonctionnent sans ces données.
 
 Les boutons colorés ajoutent ou retirent un portefeuille dans **toutes les vues liées à la sélection du notebook**. « Tout », « Aucun » et « Sélection par défaut » sont disponibles. Les fiches et l'allocation d'un portefeuille ont leur propre sélecteur. Les références B1, B2, B1M et B2M restent sélectionnables ; leurs marques grises sont cohérentes entre graphiques.
 

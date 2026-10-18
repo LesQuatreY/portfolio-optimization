@@ -1,0 +1,106 @@
+"""Fresh-kernel builder checks + explicitly SYNTHETIC rendering, offline.
+
+Nothing is written to source notebooks, Research or configuration. All exports ignored by Git.
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import os
+from pathlib import Path
+import sys
+
+import nbformat
+from nbclient import NotebookClient
+import numpy as np
+import pandas as pd
+import plotly.io as pio
+
+from portfolio_lab.v2 import custom as C, custom_analytics as A
+from portfolio_lab.v2.custom_ui import allocation_preview
+from portfolio_lab.v2.guard import sha256_file
+from portfolio_lab.v2.settings import load_settings
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def synthetic_panel(spec):
+    # Artificial business-day grid, NOT the Euronext calendar or historical observations.
+    dates = pd.bdate_range(spec.start, spec.end)
+    t = np.arange(len(dates))
+    prices = pd.DataFrame({a: 100 * np.exp(.00005 * (i + 1) * t + .13 * np.sin(t / (35 + i * 11)))
+                           for i, a in enumerate(spec.weights)}, index=dates)
+    return C.PricePanel(prices, {a: {"source": "Artificial deterministic software fixture"}
+                                for a in spec.weights}, synthetic=True, sessions=dates)
+
+
+def main():
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--render", action="store_true")
+    args = parser.parse_args()
+    out = ROOT / "outputs/v2_1"
+    out.mkdir(parents=True, exist_ok=True)
+    settings = load_settings(ROOT)
+    before = {s.name: sha256_file(settings.research_root / s.path) for s in settings.artifacts}
+    notebook = ROOT / "notebooks/04_portefeuilles_personnalises.ipynb"
+    source_hash = sha256_file(notebook)
+    nb = nbformat.read(notebook, as_version=4)
+    nb.cells.append(nbformat.v4.new_code_cell(
+        "from portfolio_lab.v2.custom import DataUnavailable\n"
+        "identity = builder.current_spec().identity\n"
+        "assert builder.run_button.disabled and not builder.save_button.disabled\n"
+        "try:\n"
+        "    builder.run()\n"
+        "except DataUnavailable:\n"
+        "    pass\n"
+        "else:\n"
+        "    raise AssertionError('Missing dataset must block execution')\n"
+        "builder.weights['CAC40'].value = 12\n"
+        "assert builder.run_button.disabled and builder.save_button.disabled\n"
+        "builder.weights['CAC40'].value = 10\n"
+        "assert builder.current_spec().identity == identity\n"
+        "builder._load()\n"
+        "assert builder.current_spec().identity == identity\n"
+        "assert builder.result is None\n"))
+    env = dict(os.environ, PATH=str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", ""),
+               PYTHONPATH=str(ROOT / "src"), PYTHONDONTWRITEBYTECODE="1")
+    NotebookClient(nb, timeout=180, kernel_name="python3", record_timing=False,
+                   resources={"metadata": {"path": str(ROOT / "notebooks")}}).execute(env=env)
+    nb.cells.pop()
+    text = nbformat.writes(nb)
+    # The documentation mentions the TEST lock; check saved outputs only, not explanatory text.
+    # Widget state includes no historical market data; validate the only plotted allocation separately.
+    assert sha256_file(notebook) == source_hash
+    (out / "04.executed.ipynb").write_text(text, encoding="utf-8")
+    print("Fresh-kernel notebook, invalid weights and missing-data blockade: PASS", flush=True)
+    spec = C.load_spec(ROOT / "config/v2/portfolios/mon_portefeuille_diversifie.json")
+    panel = synthetic_panel(spec)
+    result = C.simulate(spec, panel)
+    figs = {"target": allocation_preview(spec), **A.figures(result)}
+    (out / "SYNTHETIC_metadata.json").write_text(json.dumps(result.metadata(), ensure_ascii=False, indent=2),
+                                               encoding="utf-8")
+    for name, fig in figs.items():
+        if name != "target":
+            assert "SYNTH" in fig.layout.title.text
+        fig.write_html(out / f"SYNTHETIC_{name}.html", include_plotlyjs=True)
+        if args.render:
+            # Reuse the V2 workaround for the Windows Kaleido 0.1 engine.
+            for width in (1050, 640):
+                for extension in ("svg", "png"):
+                    pio.kaleido.scope._shutdown_kaleido()
+                    pio.kaleido.scope.mathjax = None
+                    fig.write_image(str(out / f"SYNTHETIC_{name}_{width}.{extension}"), width=width,
+                                    height=fig.layout.height, scale=1)
+    stability, correlations = A.stability(result)
+    assert len(stability) == 5 and len(correlations) == 5
+    assert set(A.sensitivities(spec, panel)) == set(C.MODES)
+    after = {s.name: sha256_file(settings.research_root / s.path) for s in settings.artifacts}
+    assert before == after
+    print("Synthetic analytics, three modes, chart exports and 12 frozen hashes: PASS", flush=True)
+
+
+if __name__ == "__main__":
+    main()

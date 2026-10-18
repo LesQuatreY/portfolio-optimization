@@ -1,0 +1,51 @@
+schema_version: 1
+# No validation may be inferred from coverage alone. No data is fetched by the software.
+assets:
+  EM:
+    label: Marchés émergents — proxy EEM
+    status: pending_validation
+    currency: EUR
+    source: Panel DV1 Research, EEM USD converti en EUR
+    dividends: Rendement total reconstruit, distributions réinvesties ; frais ETF incorporés
+    kind: ETF proxy MSCI EM, pas une série MSCI NETR officielle
+    reason: Couverture locale trouvée ; ajustements et calendrier causal à vérifier indépendamment
+  SP500:
+    label: S&P 500 — proxy SPY
+    status: pending_validation
+    currency: EUR
+    source: Panel DV1 Research, SPY USD converti en EUR
+    dividends: Rendement total reconstruit ; frais ETF incorporés
+    kind: ETF proxy
+    reason: Couverture locale trouvée ; ajustements et calendrier causal à vérifier indépendamment
+  WORLD:
+    label: MSCI World — proxy CW8
+    status: pending_validation
+    currency: EUR
+    source: Panel DV1 Research, CW8.PA
+    dividends: ETF capitalisant ; frais ETF incorporés
+    kind: ETF proxy MSCI World, pas une série MSCI NETR officielle
+    reason: Couverture locale trouvée ; ajustements et calendrier causal à vérifier indépendamment
+  CAC40:
+    label: CAC 40 — rendement total requis
+    status: missing
+    currency: EUR
+    source: NR QS0011131826 préféré ; GR QS0011131834 ou ETF FR0007052782 à valider
+    dividends: NR ou GR à documenter ; aucune série de prix seule admise
+    kind: Source manquante
+    reason: Série quotidienne à rendement total 2014–2023 indisponible et non validée
+  GOLD:
+    label: Or — proxy GLD en EUR
+    status: pending_validation
+    currency: EUR
+    source: Panel DV1 Research, GLD USD converti en EUR
+    dividends: Sans dividende ; frais du véhicule incorporés
+    kind: Proxy ETF or
+    reason: Couverture locale trouvée ; calendrier et conversion causale à vérifier indépendamment
+  BTC:
+    label: Bitcoin — BTC-EUR
+    status: pending_validation
+    currency: EUR
+    source: Panel DV1 Research, BTC-EUR Yahoo/CoinMarketCap
+    dividends: Aucun dividende
+    kind: Proxy de prix spot, conventions quotidiennes à confirmer
+    reason: Couverture locale trouvée ; horodatage UTC et calendrier causal à vérifier indépendamment
