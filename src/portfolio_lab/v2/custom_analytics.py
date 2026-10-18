@@ -3,21 +3,27 @@ from __future__ import annotations
 
 from dataclasses import replace
 import html
+from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
 from . import charts, metrics as M
-from .custom import BacktestResult, DataUnavailable, MODES, simulate
+from .custom import (ROOT, BacktestResult, DataUnavailable, MODES, PortfolioSpec, load_catalog,
+                     load_validated_panel, simulate)
 
 ASSET_COLORS = {"EM": "#1baf7a", "SP500": "#2a78d6", "WORLD": "#5598e7", "CAC40": "#6250d6",
                 "GOLD": "#eda100", "BTC": "#eb6834"}
 
 
-def risk(total, initial, annual_rf=0.0):
+def risk(total, initial, annual_rf=0.0, rate=None):
+    """Economic path metrics. ``rate`` (annual EUR overnight series, ACT/360) gives the Sharpe on
+    Research's cash convention; otherwise the explicit constant ``annual_rf`` is used."""
     ret = M.path_returns(total, initial)
     # RF = explicit constant, ACT/360; frozen Sharpe is retained separately, never relabelled.
-    rf = pd.Series(float(annual_rf), index=total.index)
+    rf = pd.Series(float(annual_rf), index=total.index) if rate is None else rate.reindex(total.index)
+    if rf.isna().any():
+        raise DataUnavailable("Taux sans risque manquant sur le calendrier de comparaison.")
     excess = ret.to_numpy() - M.daily_risk_free(total.index, rf)
     std = excess.std(ddof=1) if len(excess) > 1 else np.nan
     metrics = {"CAGR économique": M.cagr(float(total.iloc[-1]), initial, M.years(total.index)),
@@ -26,7 +32,9 @@ def risk(total, initial, annual_rf=0.0):
                "Rendement arithmétique": float(ret.mean() * 252),
                "Sharpe (taux 0 %)": float(excess.mean() / std * np.sqrt(252)) if std > 1e-15 else np.nan,
                "Valeur finale économique (€)": float(total.iloc[-1])}
-    if annual_rf != 0:
+    if rate is not None:
+        metrics["Sharpe (taux EUR Research)"] = metrics.pop("Sharpe (taux 0 %)")
+    elif annual_rf != 0:
         metrics[f"Sharpe (taux {annual_rf:.2%})"] = metrics.pop("Sharpe (taux 0 %)")
     return metrics
 
@@ -104,7 +112,68 @@ def sensitivities(spec, panel):
     return {mode: simulate(replace(spec, rebalance=mode), panel) for mode in MODES}
 
 
-def comparison(result, lab, ids):
+def common_calendar(lab, index):
+    """Research paths SAMPLED on the custom valuation calendar: values are never changed, removed
+    Research dates are listed (V2.2: 25/12/2019, a vendor placeholder on a Euronext holiday).
+    The returns of removed dates are carried by the next common date."""
+    index = pd.DatetimeIndex(index)
+    missing = index.difference(lab.wealth.index)
+    if len(missing):
+        raise DataUnavailable(f"Dates du portefeuille absentes des courbes Research, ex. {missing[0].date()}.")
+    return SimpleNamespace(ordered=lab.ordered, initial=lab.initial, wealth=lab.wealth.loc[index],
+                           reference=lab.reference, summary=getattr(lab, "summary", None), meta=lab.meta,
+                           strategies=lab.strategies, benchmarks=lab.benchmarks,
+                           eur_rate=lab.eur_rate.reindex(index) if getattr(lab, "eur_rate", None) is not None else None,
+                           dropped_dates=[str(d.date()) for d in lab.wealth.index.difference(index)])
+
+
+def comparability_table():
+    """Which numbers may be compared between a custom path and the frozen Research results."""
+    rows = [
+        ("Volatilité, MaxDD, Sharpe (taux EUR Research)", "Oui, avec réserve",
+         "Mêmes séances et même taux ; Research inclut ses frais et impôts intermédiaires dans la trajectoire"),
+        ("CAGR économique personnalisé vs CAGR brut Research", "Approximativement",
+         "Tous deux sans frais de transaction ni fiscalité ; frais des fonds et coût du levier inclus ; "
+         "le brut Research vient d'une simulation séparée"),
+        ("CAGR de trajectoire Research", "Avec réserve",
+         "Après frais et impôts intermédiaires Research, avant impôts de sortie"),
+        ("CAGR net fiscal / patrimoine net", "Non",
+         "Research : modèle fiscal gelé ; personnalisé : Non calculé (aucun modèle fiscal approuvé)"),
+        ("Sharpe au taux 0 %", "Non avec Research",
+         "Convention de taux différente du Sharpe canonique Research"),
+    ]
+    return pd.DataFrame(rows, columns=["Mesure", "Comparable ?", "Raison"]).set_index("Mesure")
+
+
+BENCHMARKS_PATH = ROOT / "config/v2/custom_benchmarks.yaml"
+EXTERNAL_COLORS = {"BRK_B": "#0f766e"}
+
+
+def benchmark_catalog():
+    return load_catalog(BENCHMARKS_PATH)
+
+
+def benchmark_result(name, catalog=None):
+    """Buy & hold of one validated external benchmark (100 % of the capital, explicit cost from the
+    catalog). Fails closed through the same guarded loader as custom portfolios."""
+    catalog = benchmark_catalog() if catalog is None else catalog
+    if name not in catalog:
+        raise DataUnavailable(f"Référence externe inconnue : {name}.")
+    item = catalog[name]
+    spec = PortfolioSpec(item["label"], {name: 1.0}, rebalance="buy_hold", cost_bps=float(item.get("cost_bps", 0)))
+    return simulate(spec, load_validated_panel(spec, catalog))
+
+
+def _external_row(bench):
+    item = next(iter(bench.provenance.values()), {})
+    return {"Base": f"Achat-conservation économique, frais explicites {bench.spec.cost_bps:g} pb, sans fiscalité ; "
+                    + str(item.get("kind", "référence externe")),
+            "CAGR brut Research (sans frais ni impôts)": "—", "CAGR net fiscal": "Non calculé",
+            "Patrimoine net fiscal (€)": "Non calculé"}
+
+
+def comparison(result, lab, ids, extra=()):
+    """``extra``: validated external benchmark results (e.g. BRK.B) on the SAME calendar."""
     if result.synthetic:
         raise DataUnavailable("Une démonstration synthétique ne se compare pas aux performances Research.")
     ids = lab.ordered(ids)
@@ -115,9 +184,17 @@ def comparison(result, lab, ids):
     # Paths have different accounting bases, so show the distinction on every row.
     custom_label = result.spec.name + " · personnalisé " + result.spec.identity[:8]
     curves = pd.DataFrame({custom_label: result.ledger.nav / result.spec.initial_capital})
+    rate = getattr(lab, "eur_rate", None)
+    summary = getattr(lab, "summary", None)
+
+    def sharpe_eur(total, initial):
+        return risk(total, initial, rate=rate)["Sharpe (taux EUR Research)"] if rate is not None else np.nan
+
     rows = []
     row = risk(result.ledger.nav, result.spec.initial_capital)
     row.update({"Portefeuille": custom_label, "Base": "Économique, frais proportionnels, sans fiscalité",
+                "Sharpe (taux EUR Research)": sharpe_eur(result.ledger.nav, result.spec.initial_capital),
+                "CAGR brut Research (sans frais ni impôts)": "—",
                 "CAGR net fiscal": "Non calculé", "Patrimoine net fiscal (€)": "Non calculé"})
     rows.append(row)
     for sid in ids:
@@ -125,8 +202,22 @@ def comparison(result, lab, ids):
         row = risk(lab.wealth[sid], lab.initial)
         ref = lab.reference.loc[sid]
         row.update({"Portefeuille": sid, "Base": "Research gelé : frais et impôts intermédiaires inclus",
+                    "Sharpe (taux EUR Research)": sharpe_eur(lab.wealth[sid], lab.initial),
+                    "CAGR brut Research (sans frais ni impôts)":
+                        float(summary.loc[sid, "cagr_gross"]) if summary is not None else "—",
                     "CAGR net fiscal": ref["FULL_cagr"], "Patrimoine net fiscal (€)": ref["terminal_net"]})
         rows.append(row)
+    for bench in extra:
+        if bench.synthetic or not bench.ledger.index.equals(result.ledger.index):
+            raise DataUnavailable("Référence externe : calendrier différent ou données synthétiques.")
+        name = next(iter(bench.spec.weights))
+        label = bench.spec.name
+        curves[label] = bench.ledger.nav / bench.spec.initial_capital
+        row = risk(bench.ledger.nav, bench.spec.initial_capital)
+        row.update({"Portefeuille": label, "Sharpe (taux EUR Research)": sharpe_eur(bench.ledger.nav, bench.spec.initial_capital),
+                    **_external_row(bench)})
+        rows.append(row)
+        EXTERNAL_COLORS.setdefault(label, EXTERNAL_COLORS.get(name, "#0f766e"))
     return curves, pd.DataFrame(rows).set_index("Portefeuille")
 
 
@@ -185,8 +276,16 @@ def figures(result):
     return outputs
 
 
-def comparison_figures(result, lab, ids):
-    curves, table = comparison(result, lab, ids)
+def _color(lab, sid, custom_label):
+    if sid == custom_label:
+        return "#8a46ba"
+    if sid in EXTERNAL_COLORS:
+        return EXTERNAL_COLORS[sid]
+    return charts.style(lab, sid)["color"]
+
+
+def comparison_figures(result, lab, ids, extra=()):
+    curves, table = comparison(result, lab, ids, extra)
     custom_label = curves.columns[0]
     outputs = {}
     for key, title in (("wealth", "Comparaison des trajectoires — bases comptables distinctes"),
@@ -194,7 +293,7 @@ def comparison_figures(result, lab, ids):
         fig = _figure(title, result, "Base 1" if key == "wealth" else "Drawdown")
         for sid in curves:
             series = curves[sid] if key == "wealth" else M.drawdown(curves[sid], 1)
-            color = "#8a46ba" if sid == custom_label else charts.style(lab, sid)["color"]
+            color = _color(lab, sid, custom_label)
             fig.add_scatter(x=series.index, y=series, name=html.escape(sid), line=dict(color=color),
                             hovertemplate="%{x|%d/%m/%Y}<br>%{y:.4f}<extra>%{fullData.name}</extra>")
         if key == "drawdown":
@@ -202,7 +301,7 @@ def comparison_figures(result, lab, ids):
         outputs[key] = fig
     fig = _figure("CAGR des trajectoires — aucune frontière fiscale commune", result, "CAGR", time=False)
     for name, row in table.iterrows():
-        color = "#8a46ba" if name == custom_label else charts.style(lab, name)["color"]
+        color = _color(lab, name, custom_label)
         fig.add_scatter(x=[row["Volatilité"]], y=[row["CAGR économique"]], mode="markers", name=html.escape(name),
                         marker=dict(color=color, size=12), customdata=[[row["MaxDD"], row["Base"]]],
                         hovertemplate="%{y:.2%}<br>%{customdata[1]}<extra>%{fullData.name}</extra>")

@@ -19,7 +19,7 @@ import plotly.io as pio
 
 from portfolio_lab.v2 import custom as C, custom_analytics as A
 from portfolio_lab.v2.custom_ui import allocation_preview
-from portfolio_lab.v2.guard import sha256_file
+from portfolio_lab.v2.guard import scan_text_for_dates_after, sha256_file
 from portfolio_lab.v2.settings import load_settings
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -54,13 +54,24 @@ def main():
         "expected = builder.current_spec().to_dict()\n"
         "assert expected['name'] == 'Mon portefeuille diversifié'\n"
         "assert expected['weights'] == {'EM': .30, 'SP500': .30, 'WORLD': .15, 'CAC40': .10, 'GOLD': .10, 'BTC': .05}\n"
-        "assert builder.run_button.disabled and not builder.save_button.disabled\n"
-        "try:\n"
-        "    builder.run()\n"
-        "except DataUnavailable:\n"
-        "    pass\n"
-        "else:\n"
-        "    raise AssertionError('Missing dataset must block execution')\n"
+        "assert not builder.run_button.disabled and not builder.save_button.disabled\n"
+        "# V2.2: the six sources are validated; the saved portfolio runs unchanged on real data.\n"
+        "result, panel = builder.run()\n"
+        "assert not result.synthetic and len(result.ledger) == 2368 and not builder.compare_button.disabled\n"
+        "assert str(result.ledger.index[0].date()) == '2014-10-01' and str(result.ledger.index[-1].date()) == '2023-12-29'\n"
+        "builder._run()\n"
+        "builder.research.value = ('N07', 'D2_25', 'B1', 'B2', 'B1M', 'B2M', 'BRK_B')\n"
+        "builder._compare()\n"
+        "from portfolio_lab.v2 import custom_analytics as A\n"
+        "from portfolio_lab.v2.bridge import load_lab\n"
+        "view = A.common_calendar(load_lab(project), result.ledger.index)\n"
+        "assert view.dropped_dates == ['2019-12-25'] and view.wealth.index.equals(result.ledger.index)\n"
+        "brk = A.benchmark_result('BRK_B')\n"
+        "assert brk.spec.rebalance == 'buy_hold' and brk.ledger.index.equals(result.ledger.index)\n"
+        "figs, table = A.comparison_figures(result, view, ['N07', 'D2_25', 'B1', 'B2', 'B1M', 'B2M'], extra=[brk])\n"
+        "assert len(table) == 8 and table.iloc[0]['CAGR net fiscal'] == 'Non calculé' and len(figs) == 3\n"
+        "assert table.loc[brk.spec.name, 'CAGR net fiscal'] == 'Non calculé' and 'concentrée' in table.loc[brk.spec.name, 'Base']\n"
+        "display(A.comparability_table(), A.summary(result), table)\n"
         "builder.weights['CAC40'].value = 12\n"
         "assert builder.run_button.disabled and builder.save_button.disabled\n"
         "builder.weights['CAC40'].value = 10\n"
@@ -93,18 +104,26 @@ def main():
         "        reopened.saved.value = saved\n"
         "        reopened.load_button.click()\n"
         "        assert reopened.current_spec().to_dict() == expected\n"
-        "        assert reopened.run_button.disabled and not reopened.save_button.disabled\n"))
+        "        assert not reopened.save_button.disabled\n"))
     env = dict(os.environ, PATH=str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", ""),
                PYTHONPATH=str(ROOT / "src"), PYTHONDONTWRITEBYTECODE="1")
     NotebookClient(nb, timeout=180, kernel_name="python3", record_timing=False,
                    resources={"metadata": {"path": str(ROOT / "notebooks")}}).execute(env=env)
+    # TEST lock on everything the executed notebook DISPLAYS, check cell included (the markdown
+    # cites 2024–2026 on purpose, so sources are not scanned).
+    shown = json.dumps([c.get("outputs", []) for c in nb.cells], ensure_ascii=False)
+    later = scan_text_for_dates_after(shown)
+    assert not later, f"post-cutoff dates in notebook outputs: {later[:5]}"
+    for label in ("Comparable ?", "Sharpe (taux EUR Research)", "CAGR brut Research", "Non calculé"):
+        assert label in shown, f"comparison output missing: {label}"
     nb.cells.pop()
     text = nbformat.writes(nb)
     # The documentation mentions the TEST lock; check saved outputs only, not explanatory text.
     # Widget state includes no historical market data; validate the only plotted allocation separately.
     assert sha256_file(notebook) == source_hash
     (out / "04.executed.ipynb").write_text(text, encoding="utf-8")
-    print("Fresh-kernel notebook, exact named allocation, disk save/reload and missing-data blockade: PASS", flush=True)
+    print("Fresh-kernel notebook, exact named allocation, disk save/reload, real six-asset run, Research comparison "
+          "and output cutoff scan: PASS", flush=True)
     spec = C.load_spec(ROOT / "config/v2/portfolios/mon_portefeuille_diversifie.json")
     panel = synthetic_panel(spec)
     result = C.simulate(spec, panel)

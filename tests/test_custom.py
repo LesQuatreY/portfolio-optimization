@@ -155,12 +155,26 @@ def test_fx_direction_and_no_fill():
         C.to_eur(usd, "USD", fx.iloc[1:])
 
 
-def test_saved_original_is_blocked_without_reweighting():
+_REAL_LOAD_CATALOG = C.load_catalog
+
+
+def blocked_catalog():
+    """Real catalog with the CAC 40 entry set back to missing: exercises the fail-closed path."""
+    catalog = _REAL_LOAD_CATALOG()
+    catalog["CAC40"] = {**catalog["CAC40"], "status": "missing", "label": "CAC 40 — rendement total requis",
+                        "reason": "Source manquante (fixture de test)"}
+    return catalog
+
+
+def test_saved_original_keeps_weights_and_fails_closed_without_validation():
     original = C.load_spec(C.ROOT / "config/v2/portfolios/mon_portefeuille_diversifie.json")
     assert dict(original.weights) == {"EM": .30, "SP500": .30, "WORLD": .15, "CAC40": .10, "GOLD": .10, "BTC": .05}
-    assert len(C.availability(original, C.load_catalog())) == 6
+    # V2.2: all six sources passed admission; the original weights are unchanged.
+    assert C.availability(original, C.load_catalog()) == []
+    blocked = C.availability(original, blocked_catalog())
+    assert len(blocked) == 1 and blocked[0].startswith("CAC 40")
     with pytest.raises(C.DataUnavailable, match="CAC 40"):
-        C.load_validated_panel(original)
+        C.load_validated_panel(original, blocked_catalog())
     assert dict(original.weights)["CAC40"] == .1
 
 
@@ -248,6 +262,8 @@ def test_charts_have_synthetic_labels_and_bounded_axes():
 def test_ui_validation_missing_dataset_and_preserved_weights(monkeypatch):
     from portfolio_lab.v2 import custom_ui as UI
     monkeypatch.setattr(UI, "display", lambda *args, **kw: None)
+    monkeypatch.setattr(UI, "load_catalog", blocked_catalog)
+    monkeypatch.setattr(C, "load_catalog", blocked_catalog)
     b = UI.PortfolioBuilder()
     original = b.current_spec()
     assert b.run_button.disabled
@@ -305,6 +321,7 @@ def test_widget_save_and_load_restore_exact_spec(monkeypatch, tmp_path):
     monkeypatch.setattr(C, "ROOT", tmp_path)
     monkeypatch.setattr(UI, "ROOT", tmp_path)
     monkeypatch.setattr(UI, "display", lambda *args, **kw: None)
+    monkeypatch.setattr(UI, "load_catalog", blocked_catalog)
     b = UI.PortfolioBuilder()
     original = b.current_spec()
     b.name.value = "Configuration personnalisée"

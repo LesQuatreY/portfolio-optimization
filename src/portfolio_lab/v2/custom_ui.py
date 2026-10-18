@@ -56,9 +56,11 @@ class PortfolioBuilder:
         self.compare_button = W.Button(description="Comparer à Research", disabled=True)
         from .settings import load_settings
         settings = load_settings(ROOT)
-        self.research = W.SelectMultiple(options=[s.id for s in settings.strategies],
-                                        value=("N07", "D2_25", "B1", "B2", "B1M", "B2M"),
-                                        description="Research", rows=6)
+        self.benchmarks = A.benchmark_catalog()
+        self.research = W.SelectMultiple(
+            options=[(s.id, s.id) for s in settings.strategies]
+            + [(item["label"].split(" — ")[0] + " (référence externe)", key) for key, item in self.benchmarks.items()],
+            value=("N07", "D2_25", "B1", "B2", "B1M", "B2M"), description="Comparer", rows=7)
         self.save_button.on_click(self._save)
         self.load_button.on_click(self._load)
         self.run_button.on_click(self._run)
@@ -188,9 +190,22 @@ class PortfolioBuilder:
                 if self.result.synthetic:
                     raise DataUnavailable("Comparaison Research interdite pour une démonstration synthétique.")
                 from .bridge import load_lab
-                figs, table = A.comparison_figures(self.result, load_lab(ROOT), self.research.value)
+                view = A.common_calendar(load_lab(ROOT), self.result.ledger.index)
+                research = [v for v in self.research.value if v not in self.benchmarks]
+                extra = []
+                for name in (v for v in self.research.value if v in self.benchmarks):
+                    try:
+                        extra.append(A.benchmark_result(name, self.benchmarks))
+                    except (ValueError, RuntimeError, OSError) as exc:
+                        display(HTML("<p><b>" + html.escape(self.benchmarks[name]["label"]) + " indisponible :</b> "
+                                     + html.escape(str(exc)) + "</p>"))
+                figs, table = A.comparison_figures(self.result, view, research, extra)
                 display(HTML("<b>Bases différentes :</b> la trajectoire personnalisée n'inclut pas la fiscalité. "
-                             "Research inclut ses frais et impôts intermédiaires. Aucun classement fiscal commun."))
+                             "Research inclut ses frais et impôts intermédiaires. Aucun classement fiscal commun. "
+                             "Courbes Research échantillonnées sur les " + str(len(view.wealth)) + " séances du "
+                             "portefeuille ; dates Research retirées : " + html.escape(", ".join(view.dropped_dates) or "aucune")
+                             + " (valeurs inchangées)."))
+                display(A.comparability_table())
                 display(table)
                 for fig in figs.values():
                     display(fig)

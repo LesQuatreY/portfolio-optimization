@@ -1,51 +1,102 @@
 schema_version: 1
 # No validation may be inferred from coverage alone. No data is fetched by the software.
+# V2.2 Phase A: levels are built by scripts/prepare_custom_data.py into data/v2_1/ (ignored by Git)
+# and pinned below only when EVERY predeclared check passes (outputs/v2_1/data_admission.json).
+# Report: docs/V2_2_DATA_ADMISSION.md. Convention: one causal snapshot per Euronext Paris session.
 assets:
   EM:
     label: Marchés émergents — proxy EEM
-    status: pending_validation
+    status: validated
     currency: EUR
-    source: Panel DV1 Research, EEM USD converti en EUR
-    dividends: Rendement total reconstruit, distributions réinvesties ; frais ETF incorporés
+    source: EEM USD (Yahoo, artefact Research épinglé 612e77ab…), clôture NYSE disponible avant l'instantané (J−1), change BCE publié
+    dividends: Rendement total explicite (clôture + distribution) / clôture précédente ; 20 distributions brutes de retenue ; frais ETF incorporés
     kind: ETF proxy MSCI EM, pas une série MSCI NETR officielle
-    reason: 2 328 observations ; 20 distributions ; écart TR/AdjClose jusqu’à 4,87 pb ; validation externe et horodatage EUR/USD requis
+    independent_check: MSCI EM NR USD officiel — écart −0,53 %/an, corrélation mensuelle 0,984, écart annuel max 1,56 % ; change selon amendement A1
+    path: levels/EM.csv
+    sha256: 03675860699daf87d4f6d883c68180404f6c5708c3c1cc6ba5ecf4599eae35cd
+    calendar: euronext_paris_sessions_v1
+    clock: euronext_close_snapshot_asof_v1
+    research_alignment: validated_paris_session_end
+    calendar_path: calendar/euronext_paris_sessions.csv
+    calendar_sha256: e9e1ae6663280c4cd479638b623cae0116852341f40c6b04f5312819a7121fca
+    reason: Validé (amendement A1 pour le change, seuils choisis après observation, approuvé le 18/10/2026)
   SP500:
     label: S&P 500 — proxy SPY
-    status: pending_validation
+    status: validated
     currency: EUR
-    source: Panel DV1 Research, SPY USD converti en EUR
-    dividends: Rendement total reconstruit ; frais ETF incorporés
+    source: SPY USD (Yahoo, artefact Research épinglé 141e7691…), clôture NYSE disponible avant l'instantané (J−1), change BCE publié
+    dividends: Rendement total explicite inchangé ; 37 distributions brutes de retenue ; frais ETF incorporés
     kind: ETF proxy
-    reason: 2 328 observations ; 37 distributions ; écart TR/AdjClose jusqu’à 8,76 pb ; validation externe et horodatage EUR/USD requis
+    independent_check: S&P 500 TR (^SP500TR) — écart −0,087 %/an, ex-dividende max 16,2 pb, écart de niveau hors dérive médian 3,1 pb, glissant 21 séances max 13,0 pb, série max 2 séances > 25 pb (amendement A2)
+    path: levels/SP500.csv
+    sha256: 6f80c65b3bc2985bdba9df22f58de75ba28aa1a011880ebec00d613de0d848ee
+    calendar: euronext_paris_sessions_v1
+    clock: euronext_close_snapshot_asof_v1
+    research_alignment: validated_paris_session_end
+    calendar_path: calendar/euronext_paris_sessions.csv
+    calendar_sha256: e9e1ae6663280c4cd479638b623cae0116852341f40c6b04f5312819a7121fca
+    reason: Validé (amendements A1 et A2, seuils choisis après observation, approuvés le 18/10/2026)
   WORLD:
     label: MSCI World — proxy CW8
-    status: pending_validation
+    status: validated
     currency: EUR
-    source: Panel DV1 Research, CW8.PA
-    dividends: ETF capitalisant ; frais ETF incorporés
+    source: CW8.PA EUR (Yahoo, artefact Research épinglé 2294f68a…), clôture Euronext du jour
+    dividends: ETF capitalisant ; frais ETF incorporés ; aucune distribution ajoutée
     kind: ETF proxy MSCI World, pas une série MSCI NETR officielle
-    reason: 21 dates du panel sans observation CW8 ; 62 dates CW8 omises ; raccord du 18/04/2018 et calendrier commun à certifier
+    independent_check: MSCI World NR EUR officiel (MSCI, borné au 29/12/2023) — écart −0,11 %/an, corrélation mensuelle 0,988, écart annuel max 1,51 %, absorption du 18/04/2018 continue (6,8 pb)
+    calendar: euronext_paris_sessions_v1
+    clock: euronext_close_snapshot_asof_v1
+    research_alignment: validated_paris_session_end
+    path: levels/WORLD.csv
+    sha256: c2d784ff2469f80e3b0f1edcaae1c3e98213ade4d245b729cf6122f8d813c81e
+    calendar_path: calendar/euronext_paris_sessions.csv
+    calendar_sha256: e9e1ae6663280c4cd479638b623cae0116852341f40c6b04f5312819a7121fca
+    reason: Validé. Ligne fictive du 25/12/2019 retirée ; le 31/12/2015, sans aucune donnée parisienne (CW8, CAC 40 NR, ^FCHI), est hors calendrier de valorisation
   CAC40:
-    label: CAC 40 — rendement total requis
-    status: missing
+    label: CAC 40 — Net Return (NR) officiel
+    status: validated
     currency: EUR
-    source: NR QS0011131826 ou GR QS0011131834 ; FR0007080973 étudié, absorbé le 14/02/2018 par LU1681046931
-    dividends: NR ou GR à documenter ; aucune série de prix seule admise
-    kind: Source manquante
-    reason: Aucun export quotidien fiable obtenu ; successeur de FR0007080973 passé au CAC 40 ESG le 21/03/2022 ; aucun raccord implicite admis
+    source: CAC 40 NR QS0011131826, export Bourse Direct (PX1NR XPAR EUR) borné date d'abord (2 367 lignes ; original SHA-256 7a8337b1… inchangé)
+    dividends: Dividendes nets réinvestis par l'indice ; aucun réinvestissement supplémentaire
+    kind: Indice officiel Euronext (export d'un diffuseur)
+    independent_check: Indice prix CAC 40 ^FCHI (Yahoo, adaptateur borné) — sous-performance quotidienne max 0,026 pb (limite 1 pb), écart NR − prix +2,31 %/an ; ancrage officiel Euronext PX1NR 10 521,77 au 19/10/2020
+    calendar: euronext_paris_sessions_v1
+    clock: euronext_close_snapshot_asof_v1
+    research_alignment: validated_paris_session_end
+    path: levels/CAC40.csv
+    sha256: 8405f581bd42f128c1752981612334e4a27dd134fe346ff4e730d8aaecded1c5
+    calendar_path: calendar/euronext_paris_sessions.csv
+    calendar_sha256: e9e1ae6663280c4cd479638b623cae0116852341f40c6b04f5312819a7121fca
+    reason: "Validé avec corrections déclarées (fichiers bruts intacts) : NR 19/10/2020 10 493,36 → 10 521,77 (Euronext officiel) ; ^FCHI 27/06/2016 4 030,30 → 3 984,72 (AFP). Ligne du 01/01/2015 réétiquetée au 31/12/2014 ; 27/07/2016 = marque reportée du 26/07 (ligne absente). Contrôle brut publié : échec à 111 pb"
   GOLD:
     label: Or — proxy GLD en EUR
-    status: pending_validation
+    status: validated
     currency: EUR
-    source: Panel DV1 Research, GLD USD converti en EUR
-    dividends: Sans dividende ; frais du véhicule incorporés
+    source: GLD USD (Yahoo, artefact Research épinglé b4c2e798…), clôture NYSE disponible avant l'instantané (J−1), change BCE publié
+    dividends: Sans distribution ; frais du véhicule incorporés
     kind: Proxy ETF or
-    reason: 2 328 observations GLD ; aucun dividende/split signalé ; contrôle externe des cours et heure du change EUR/USD requis
+    independent_check: IAU (iShares, autre sponsor) — écart −0,14 %/an, corrélation quotidienne 0,997, p99 21 pb, regroupement IAU 6,4 pb ; change selon amendement A1
+    path: levels/GOLD.csv
+    sha256: 2243db2b3214886900e07645cc333fe924c2f5114c95a15c54b77307a5d60616
+    calendar: euronext_paris_sessions_v1
+    clock: euronext_close_snapshot_asof_v1
+    research_alignment: validated_paris_session_end
+    calendar_path: calendar/euronext_paris_sessions.csv
+    calendar_sha256: e9e1ae6663280c4cd479638b623cae0116852341f40c6b04f5312819a7121fca
+    reason: Validé (amendement A1 pour le change, approuvé le 18/10/2026)
   BTC:
-    label: Bitcoin — BTC-EUR
-    status: pending_validation
+    label: Bitcoin — composite Bitstamp
+    status: validated
     currency: EUR
-    source: Panel DV1 Research, BTC-EUR Yahoo/CoinMarketCap
+    source: Bitstamp BTC/USD ÷ BCE (dernier fixing publié avant la clôture UTC) jusqu'au 30/04/2016, puis BTC/EUR natif ; Yahoo/CoinMarketCap rejeté
     dividends: Aucun dividende
-    kind: Proxy de prix spot, conventions quotidiennes à confirmer
-    reason: 3 377 observations quotidiennes sans trou ; sous-échantillon du panel identique ; heure de disponibilité UTC et contrôle externe requis
+    kind: Prix d'une plateforme EUR exécutable, clôture du jour UTC précédent
+    independent_check: Consensus par plateforme A3b (Bitfinex, Coinbase ; une série par plateforme) — 99e centile 154 pb, moyenne mensuelle max 106 pb, dérive 32 pb sur 9,25 ans ; Bitstamp jamais isolé ; prime propre à Coinbase en déc. 2017 confirmée par Bitfinex EUR (+6,5 pb vs Bitstamp EUR)
+    path: levels/BTC.csv
+    sha256: a7ce8e48a355ab73e613f6b838cc51a7f88feb8092a8d66ed89f24ac65dc2ddf
+    calendar: euronext_paris_sessions_v1
+    clock: euronext_close_snapshot_asof_v1
+    research_alignment: validated_paris_session_end
+    calendar_path: calendar/euronext_paris_sessions.csv
+    calendar_sha256: e9e1ae6663280c4cd479638b623cae0116852341f40c6b04f5312819a7121fca
+    reason: Validé (amendements A3 et A3b). Instantanés du 07 au 09/01/2015 = marques de valorisation reportées du 05/01/2015 pendant la suspension Bitstamp, pas des cotations exécutables
