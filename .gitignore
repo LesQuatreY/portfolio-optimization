@@ -1,4 +1,5 @@
 .venv/
+.venv-dev/
 .cache/
 tmp/
 __pycache__/
@@ -7,3 +8,5 @@ __pycache__/
 .pytest_cache/
 .ipynb_checkpoints/
 outputs/
+config/v2/investor_accounts.yaml
+data/v2_1/

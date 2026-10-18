@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "name": "custom portfolio",
+  "weights": {
+    "BTC": 0.05,
+    "CAC40": 0.1,
+    "EM": 0.3,
+    "GOLD": 0.1,
+    "SP500": 0.3,
+    "WORLD": 0.15
+  },
+  "rebalance": "monthly",
+  "initial_capital": 100000.0,
+  "cost_bps": 0.0,
+  "start": "2014-10-01",
+  "end": "2023-12-29",
+  "currency": "EUR"
+}

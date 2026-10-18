@@ -2,3 +2,6 @@
 pytest>=8,<9
 nbconvert>=7,<8
 nbclient>=0.10,<1
+# Offline Plotly previews; this bundled renderer does not require a separate Chrome install.
+kaleido==0.1.0.post1; sys_platform == "win32"
+kaleido==0.2.1; sys_platform != "win32"

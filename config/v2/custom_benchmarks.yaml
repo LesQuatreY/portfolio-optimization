@@ -1,0 +1,22 @@
+schema_version: 1
+# External benchmarks for the custom-portfolio comparison (V2.2 Phase C). Same admission rules as
+# config/v2/custom_assets.yaml: a benchmark is simulated only when ``validated`` with pinned files.
+# They are NOT assets of the portfolio editor and never join the 11 frozen Research portfolios.
+assets:
+  BRK_B:
+    label: BRK.B — Berkshire Hathaway B, achat-conservation
+    status: validated
+    currency: EUR
+    cost_bps: 0
+    source: BRK-B NYSE (Yahoo, adaptateur borné), clôture NYSE disponible avant l'instantané (J−1), change BCE publié
+    dividends: Aucun dividende versé par Berkshire ; prix = rendement total (vérifié, aucune distribution ni division dans la fenêtre)
+    kind: "Référence professionnelle concentrée : une seule entreprise (assurance, filiales opérationnelles, trésorerie, participations cotées), pas le portefeuille 13F de Warren Buffett"
+    independent_check: "Calendrier BRK-B = séances NYSE (règles) 0 ; Calendrier BRK-A = calendrier BRK-B 0 ; Distributions déclarées dans la fenêtre 0 ; Divisions d'actions déclarées dans la fenêtre 0 ; Clôture ajustée = clôture (écart relatif max) 0 ; Second fournisseur : part de ses dates présentes chez Yahoo 1 ; Second fournisseur : écart médian absolu (pb) 0.0002115 ; Second fournisseur : écart 99e centile (pb) 0.0005168 ; Second fournisseur : écart maximal (pb) 1.015 ; Avant Nasdaq (2014-09-02 → 2016-10-14) : A/(1 500 × B) écart médian absolu (pb) 10.18 ; Avant Nasdaq : borne basse de conversion, A/(1 500 × B) − 1 minimal (pb) -74.88 ; Avant Nasdaq : divergence cumulée A/B (|Δ log|, pb) 14.29 ; 10-K 2015 : clôtures Yahoo hors des fourchettes trimestrielles officielles 0 ; 10-K 2015 : extrêmes trimestriels Yahoo vs officiels (écart relatif max, trimestres complets) 4.484e-06"
+    calendar: euronext_paris_sessions_v1
+    clock: euronext_close_snapshot_asof_v1
+    research_alignment: validated_paris_session_end
+    path: levels/BRK_B.csv
+    sha256: 69095084aa2bd406bac92c9deb4f7b7d4ccb43462dcda19a7f82f2021d8ad246
+    calendar_path: calendar/euronext_paris_sessions.csv
+    calendar_sha256: e9e1ae6663280c4cd479638b623cae0116852341f40c6b04f5312819a7121fca
+    reason: "Validé selon A6-bis (révision a posteriori approuvée) ; A6 d'origine publié : 2 critères A/B non conformes"

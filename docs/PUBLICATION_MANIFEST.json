@@ -1,0 +1,36 @@
+{
+  "source_commit": "ff544ba9efc2d0b36f75b94fba0b60b5970eae9a",
+  "method": "Independent root commit; no parent and no legacy history",
+  "source_sha256": {
+    ".gitignore": "5d4cbf02724be8fec3c473a2aaa509a857b9615c6c1f173d531176e479c643e3",
+    "README.md": "58b09965576a522bcf2aac443f8ed94f835b2f904dfd755851638adc56f624ab",
+    "pyproject.toml": "3543d6ef5713b31df9e1b1928570fa6efb7047e46a6893b351512a940d9df7c9",
+    "requirements.txt": "0cac0e472eba3359aa79e9674ff11a5fd0484b9c465fc1cb774c30938edcc5d7",
+    "requirements-dev.txt": "dd8dfe1e2bc130c3d4cf06de59529a51b7f7fd9c01563e7c1576810d8de7772d",
+    "src/portfolio_lab/__init__.py": "d3e521608333dbe69a66a122d25a202498833cad22b81a3264144d0a47a06f9e",
+    "config/v2/lab.yaml": "724f94319bdf2efd0b0b0b14e9a5164a683e7e62ea265aac984d523db186b2ef",
+    "config/v2/instruments.yaml": "7d9b9585335c1bb57e239008293634de79c1289671414b0c1bce032dfa6d0294",
+    "notebooks/01_comparaison_strategies.ipynb": "9abeb4207378df077fdc96b3763aa9ed4e192b60a99cd3773d242029f0b9cc6c",
+    "notebooks/02_robustesse_historique.ipynb": "824a919f3995b22a8470c91bfd345f5fff483519d7fe0ca287374066744de2e5",
+    "notebooks/03_allocations_enveloppes.ipynb": "b7c880da0327ff5f880c04ff01a4f323cb2435d8bf2e8515ef43e58e72963aab",
+    "tests/test_v2.py": "01b3761133d79ac5173f2c0186e39d998c15a1d401ccc93f54c3e942501955b0",
+    "scripts/validate_v2.py": "53c72c98a456738edf2bcdae9b096bc076a8b76022cdd491ef4cca7cd8bf7255",
+    "docs/V2_ARCHITECTURE_AUDIT.md": "de58bb2a1621c38c9819e6c3e240d80d5645a98c263c270da7ac5e32c135d6a3",
+    "docs/V2_VALIDATION.md": "aeec9f5bd077af6148b129744e211d43cf13f4f0eb78e560431e6eb9c2fedf44",
+    "src/portfolio_lab/v2/__init__.py": "d5b3bfbab09f9cde6877f34a9042d2ad2830a4a5d17d0fb8e6b1b33871c0ce4c",
+    "src/portfolio_lab/v2/bridge.py": "37009643c67eb259656b802cdedfb185f2efac8d38356c9612472f0b8f4d7161",
+    "src/portfolio_lab/v2/charts.py": "e93c8cc16a71a5a33b1ad7d47289dd65c833b40481ac733d9cbac807e326792f",
+    "src/portfolio_lab/v2/checks.py": "6a791effc7638bc19af826fecb9c50a18c847138efc91421c1fb491d19ebe4ba",
+    "src/portfolio_lab/v2/formatting.py": "83793e6bf5e0d9d132778abfafc4a70dfb8ffdd3d1281ea032a3a958786a98b0",
+    "src/portfolio_lab/v2/guard.py": "d6ecb0ad22f6c3f335c8bcd68684fd8afbe3a017525a17aa31252f269aff7aa5",
+    "src/portfolio_lab/v2/metrics.py": "bdd23078e6b3a3c9e3c2fc197e2b5a29ae10135cf105d031cc0c7182d8ae8bf4",
+    "src/portfolio_lab/v2/settings.py": "1ed63412dce4eb2dbf17cb6e393b1b2ba0435aa06d38a0b6583215ac1b2e0112",
+    "src/portfolio_lab/v2/tables.py": "5e810e1f6b23b93f7d5d663bd794a3d6c2e998ad7a85a5c7758724ae7f5fcbbf",
+    "src/portfolio_lab/v2/ui.py": "0a83f17f5d6625d9bf1952cbe31db703387826e1f0a07daed57fa2251bf58eb4"
+  },
+  "documentation_adaptations": [
+    "README.md",
+    "docs/V2_ARCHITECTURE_AUDIT.md",
+    "docs/V2_VALIDATION.md"
+  ]
+}

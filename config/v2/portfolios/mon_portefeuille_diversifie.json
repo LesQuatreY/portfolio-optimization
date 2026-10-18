@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "name": "Mon portefeuille diversifié",
+  "weights": {"EM": 0.30, "SP500": 0.30, "WORLD": 0.15, "CAC40": 0.10, "GOLD": 0.10, "BTC": 0.05},
+  "rebalance": "monthly",
+  "initial_capital": 100000,
+  "cost_bps": 0,
+  "start": "2014-10-01",
+  "end": "2023-12-29",
+  "currency": "EUR"
+}
