@@ -1,5 +1,13 @@
 # Publication autonome de Portfolio Lab V2
 
+## Publication V2.1 depuis le dépôt canonique
+
+Le dépôt de travail canonique est désormais `Trading/portfolio-optimization`. La branche `feature/custom-portfolios-v2-1` prolonge les commits V2 existants, sans recréer de racine ni réécrire l'historique. La publication V2.1 vise uniquement la branche homonyme sur `https://github.com/LesQuatreY/portfolio-optimization.git`, sans force, fusion dans `main` ni changement de branche par défaut. Les procédures de création initiale d'un dépôt distinct ci-dessous sont des archives de la publication V2, pas des instructions pour la V2.1.
+
+La [validation finale V2.1](V2_1_RELEASE_VALIDATION.md) couvre les 111 tests, les quatre notebooks sans sorties, les empreintes Research et le verrou TEST. Les fichiers générés restent dans `outputs/` et les données locales dans `data/v2_1/`, ignorés par Git. Le manifeste de publication initial reste une référence historique ; il ne constitue pas la liste ni les empreintes des ajouts V2.1.
+
+## Historique de la publication initiale V2
+
 La branche `portfolio-lab-v2-clean` est reconstruite à partir d'une liste explicite de fichiers du commit local `ff544ba`, sans parent Git. Aucun ancien commit n'est son ancêtre ; les identifiants cités dans la documentation sont des références textuelles et ne rendent pas leurs objets accessibles depuis cette branche.
 
 ## Préservation et provenance

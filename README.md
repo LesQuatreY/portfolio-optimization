@@ -1,5 +1,7 @@
 # Portfolio Lab V2
 
+La version V2.1 est finalisée dans le dépôt canonique `Trading/portfolio-optimization`, branche `feature/custom-portfolios-v2-1`. Voir la [validation finale](docs/V2_1_RELEASE_VALIDATION.md) pour les contrôles de publication et les limites conservées.
+
 Cette branche de publication autonome contient uniquement les sources V2 approuvées. Elle commence par un nouveau commit racine sans historique hérité. La branche locale `portfolio-lab-v2`, la V1 et les checkpoints Phase 7D sont conservés séparément. Voir [la méthode de publication](docs/PUBLICATION.md).
 
 Comparer en français les **11 portefeuilles gelés de Portfolio Research** : 7 stratégies et 4 références Nasdaq, sur **2014-10-01 → 2023-12-29**, avec un capital normalisé de 100 000 € (N100).
@@ -73,11 +75,12 @@ DEV et EVAL sont deux simulations historiques déjà étudiées. EVAL n'est pas 
 .\.venv\Scripts\python.exe -m pytest -q
 .\.venv\Scripts\python.exe -m pytest tests/test_v2.py -q
 .\.venv\Scripts\python.exe scripts/validate_v2.py --render
+.\.venv\Scripts\python.exe scripts/validate_custom.py
 ```
 
 Le validateur exécute uniquement les trois notebooks V2 dans des noyaux neufs, teste la sélection, vérifie les résultats financiers et les empreintes, puis écrit les notebooks exécutés, les aperçus HTML et les figures PNG/SVG dans `outputs/v2/` (ignoré par Git). Les notebooks sources versionnés restent sans sorties dupliquées. Les rendus statiques utilisent Kaleido, une dépendance de développement.
 
-Cette publication contient les **50 tests V2**. Les anciens tests V1 et ceux lisant des archives ne sont pas inclus. Le [rapport de validation historique](docs/V2_VALIDATION.md) décrit séparément les résultats obtenus sur la branche locale complète et les limites de la validation visuelle.
+La V2.1 contient **111 tests : 50 tests V2 et 61 tests du constructeur personnalisé**. `validate_v2.py` vérifie les notebooks 01–03 ; `validate_custom.py` vérifie le notebook 04, sa sauvegarde/relecture et les analyses synthétiques dans `outputs/v2_1/` (ignoré par Git). Les quatre notebooks versionnés sont sans sorties, compteurs d'exécution ni état de widgets. Les anciens tests V1 et ceux lisant des archives ne sont pas inclus. Le [rapport de validation historique](docs/V2_VALIDATION.md) décrit séparément les résultats obtenus sur la branche locale complète et les limites de la validation visuelle.
 
 ## Périmètre et structure du dépôt
 

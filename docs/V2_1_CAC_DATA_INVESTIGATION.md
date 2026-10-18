@@ -1,5 +1,7 @@
 # V2.1 — Investigation ciblée de la source CAC 40
 
+> Mise à jour du 18 octobre 2026 : voir [l'audit du workflow et de FR0007080973](V2_1_CUSTOM_WORKFLOW_AUDIT.md), qui complète et actualise les conclusions ci-dessous. Absorption en 2018, changement CAC 40 ESG au 21/03/2022, essais bornés sur les deux ISIN et audit numérique des cinq autres actifs. Le constructeur fonctionne indépendamment du blocage historique.
+
 Date : 18 octobre 2026. Branche : `feature/custom-portfolios-v2-1`, base `1f65eaa29374055eaac4af614f93c6e8f16161f1`.
 
 **Décision : rester arrêté avant implémentation et simulation. Aucune série CAC 40 quotidienne complète et utilisable n'a été validée dans cet environnement. Cela ne prouve pas que l'historique n'existe pas chez Euronext.**

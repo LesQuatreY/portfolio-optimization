@@ -119,7 +119,8 @@ class PortfolioBuilder:
             blocked = availability(spec, self.catalog)
             self.save_button.disabled = False
             self.run_button.disabled = bool(blocked) and self.panel_loader is load_validated_panel
-            self.status.value = ("<b>Simulation historique indisponible</b><ul>" + "".join(
+            self.status.value = ("<b>Configuration valide : vous pouvez l’enregistrer et la recharger.</b>"
+                "<p>Simulation historique indisponible : les données incomplètes bloquent uniquement le calcul.</p><ul>" + "".join(
                 "<li>" + html.escape(line) + "</li>" for line in blocked) + "</ul>" if blocked else
                 "<b>Configuration valide ; les contrôles des fichiers seront vérifiés à l'exécution.</b>")
             with self.preview:
@@ -134,7 +135,7 @@ class PortfolioBuilder:
         try:
             path = save_spec(self.current_spec())
             self._refresh_saved(path.name)
-            self.status.value += "<p>Configuration enregistrée.</p>"
+            self.status.value += "<p>Configuration enregistrée : " + html.escape(path.name) + "</p>"
         except (ValueError, OSError) as exc:
             self.status.value = html.escape(str(exc))
 

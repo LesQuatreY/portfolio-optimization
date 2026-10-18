@@ -321,3 +321,51 @@ def test_widget_save_and_load_restore_exact_spec(monkeypatch, tmp_path):
     assert b.current_spec().identity == expected.identity
     assert C.load_spec(folder / "mon_portefeuille_diversifie.json").identity == original.identity
     assert b.run_button.disabled
+
+
+@pytest.mark.parametrize("status", ["missing", "pending_validation"])
+def test_named_diversified_portfolio_roundtrip_without_market_data(monkeypatch, tmp_path, status):
+    import shutil
+    from portfolio_lab.v2 import custom_ui as UI, settings
+    folder = tmp_path / "config/v2/portfolios"
+    folder.mkdir(parents=True)
+    shutil.copy(C.ROOT / "config/v2/portfolios/mon_portefeuille_diversifie.json", folder)
+    catalog = C.load_catalog()
+    for item in catalog.values():
+        item["status"] = status
+    actual_settings = settings.load_settings()
+    monkeypatch.setattr(settings, "load_settings", lambda _: actual_settings)
+    monkeypatch.setattr(C, "ROOT", tmp_path)
+    monkeypatch.setattr(UI, "ROOT", tmp_path)
+    monkeypatch.setattr(UI, "load_catalog", lambda: catalog)
+    monkeypatch.setattr(C, "load_catalog", lambda: catalog)
+    monkeypatch.setattr(UI, "display", lambda *args, **kw: None)
+
+    def forbidden_read(*args, **kwargs):
+        raise AssertionError("Configuration editing must not read market observations")
+
+    monkeypatch.setattr(C.ResearchGuard, "load", forbidden_read)
+    b = UI.PortfolioBuilder()
+    b.name.value = "Brouillon"
+    b.weights["EM"].value = 29
+    assert b.save_button.disabled
+    b.weights["EM"].value = 30
+    b.name.value = "Mon portefeuille diversifié"
+    expected = b.current_spec()
+    assert dict(expected.weights) == {"EM": .30, "SP500": .30, "WORLD": .15,
+                                      "CAC40": .10, "GOLD": .10, "BTC": .05}
+    assert b.run_button.disabled and not b.save_button.disabled
+    b.save_button.click()
+    saved = b.saved.value
+    assert C.load_spec(folder / saved).to_dict() == expected.to_dict()
+    # A new builder proves persistence across notebook/kernel restarts.
+    reopened = UI.PortfolioBuilder()
+    reopened.name.value = "Autre"
+    reopened.weights["EM"].value = 25
+    reopened.weights["SP500"].value = 35
+    reopened.saved.value = saved
+    reopened.load_button.click()
+    assert reopened.current_spec().to_dict() == expected.to_dict()
+    assert reopened.run_button.disabled and not reopened.save_button.disabled
+    with pytest.raises(C.DataUnavailable):
+        reopened.run()

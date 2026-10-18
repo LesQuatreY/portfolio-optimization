@@ -8,7 +8,7 @@ assets:
     source: Panel DV1 Research, EEM USD converti en EUR
     dividends: Rendement total reconstruit, distributions réinvesties ; frais ETF incorporés
     kind: ETF proxy MSCI EM, pas une série MSCI NETR officielle
-    reason: Couverture locale trouvée ; ajustements et calendrier causal à vérifier indépendamment
+    reason: 2 328 observations ; 20 distributions ; écart TR/AdjClose jusqu’à 4,87 pb ; validation externe et horodatage EUR/USD requis
   SP500:
     label: S&P 500 — proxy SPY
     status: pending_validation
@@ -16,7 +16,7 @@ assets:
     source: Panel DV1 Research, SPY USD converti en EUR
     dividends: Rendement total reconstruit ; frais ETF incorporés
     kind: ETF proxy
-    reason: Couverture locale trouvée ; ajustements et calendrier causal à vérifier indépendamment
+    reason: 2 328 observations ; 37 distributions ; écart TR/AdjClose jusqu’à 8,76 pb ; validation externe et horodatage EUR/USD requis
   WORLD:
     label: MSCI World — proxy CW8
     status: pending_validation
@@ -24,15 +24,15 @@ assets:
     source: Panel DV1 Research, CW8.PA
     dividends: ETF capitalisant ; frais ETF incorporés
     kind: ETF proxy MSCI World, pas une série MSCI NETR officielle
-    reason: Couverture locale trouvée ; ajustements et calendrier causal à vérifier indépendamment
+    reason: 21 dates du panel sans observation CW8 ; 62 dates CW8 omises ; raccord du 18/04/2018 et calendrier commun à certifier
   CAC40:
     label: CAC 40 — rendement total requis
     status: missing
     currency: EUR
-    source: NR QS0011131826 préféré ; GR QS0011131834 ou ETF FR0007052782 à valider
+    source: NR QS0011131826 ou GR QS0011131834 ; FR0007080973 étudié, absorbé le 14/02/2018 par LU1681046931
     dividends: NR ou GR à documenter ; aucune série de prix seule admise
     kind: Source manquante
-    reason: Série quotidienne à rendement total 2014–2023 indisponible et non validée
+    reason: Aucun export quotidien fiable obtenu ; successeur de FR0007080973 passé au CAC 40 ESG le 21/03/2022 ; aucun raccord implicite admis
   GOLD:
     label: Or — proxy GLD en EUR
     status: pending_validation
@@ -40,7 +40,7 @@ assets:
     source: Panel DV1 Research, GLD USD converti en EUR
     dividends: Sans dividende ; frais du véhicule incorporés
     kind: Proxy ETF or
-    reason: Couverture locale trouvée ; calendrier et conversion causale à vérifier indépendamment
+    reason: 2 328 observations GLD ; aucun dividende/split signalé ; contrôle externe des cours et heure du change EUR/USD requis
   BTC:
     label: Bitcoin — BTC-EUR
     status: pending_validation
@@ -48,4 +48,4 @@ assets:
     source: Panel DV1 Research, BTC-EUR Yahoo/CoinMarketCap
     dividends: Aucun dividende
     kind: Proxy de prix spot, conventions quotidiennes à confirmer
-    reason: Couverture locale trouvée ; horodatage UTC et calendrier causal à vérifier indépendamment
+    reason: 3 377 observations quotidiennes sans trou ; sous-échantillon du panel identique ; heure de disponibilité UTC et contrôle externe requis

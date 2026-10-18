@@ -51,6 +51,9 @@ def main():
     nb.cells.append(nbformat.v4.new_code_cell(
         "from portfolio_lab.v2.custom import DataUnavailable\n"
         "identity = builder.current_spec().identity\n"
+        "expected = builder.current_spec().to_dict()\n"
+        "assert expected['name'] == 'Mon portefeuille diversifié'\n"
+        "assert expected['weights'] == {'EM': .30, 'SP500': .30, 'WORLD': .15, 'CAC40': .10, 'GOLD': .10, 'BTC': .05}\n"
         "assert builder.run_button.disabled and not builder.save_button.disabled\n"
         "try:\n"
         "    builder.run()\n"
@@ -62,9 +65,35 @@ def main():
         "assert builder.run_button.disabled and builder.save_button.disabled\n"
         "builder.weights['CAC40'].value = 10\n"
         "assert builder.current_spec().identity == identity\n"
+        "builder.saved.value = 'mon_portefeuille_diversifie.json'\n"
         "builder._load()\n"
         "assert builder.current_spec().identity == identity\n"
-        "assert builder.result is None\n"))
+        "assert builder.result is None\n"
+        "import tempfile, shutil\n"
+        "from unittest.mock import patch\n"
+        "from portfolio_lab.v2 import custom as C, custom_ui as UI, settings as S\n"
+        "settings = S.load_settings()\n"
+        "with tempfile.TemporaryDirectory() as temporary:\n"
+        "    root = Path(temporary)\n"
+        "    folder = root / 'config/v2/portfolios'\n"
+        "    folder.mkdir(parents=True)\n"
+        "    shutil.copy(project / 'config/v2/portfolios/mon_portefeuille_diversifie.json', folder)\n"
+        "    shutil.copy(project / 'config/v2/custom_assets.yaml', root / 'config/v2')\n"
+        "    with patch.object(C, 'ROOT', root), patch.object(UI, 'ROOT', root), patch.object(S, 'load_settings', lambda _: settings):\n"
+        "        editor = UI.PortfolioBuilder()\n"
+        "        editor.name.value = 'Brouillon'\n"
+        "        editor.name.value = 'Mon portefeuille diversifié'\n"
+        "        editor.save_button.click()\n"
+        "        saved = editor.saved.value\n"
+        "        assert C.load_spec(folder / saved).to_dict() == expected\n"
+        "        reopened = UI.PortfolioBuilder()\n"
+        "        reopened.weights['EM'].value = 25\n"
+        "        reopened.weights['SP500'].value = 35\n"
+        "        reopened.name.value = 'Autre'\n"
+        "        reopened.saved.value = saved\n"
+        "        reopened.load_button.click()\n"
+        "        assert reopened.current_spec().to_dict() == expected\n"
+        "        assert reopened.run_button.disabled and not reopened.save_button.disabled\n"))
     env = dict(os.environ, PATH=str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", ""),
                PYTHONPATH=str(ROOT / "src"), PYTHONDONTWRITEBYTECODE="1")
     NotebookClient(nb, timeout=180, kernel_name="python3", record_timing=False,
@@ -75,7 +104,7 @@ def main():
     # Widget state includes no historical market data; validate the only plotted allocation separately.
     assert sha256_file(notebook) == source_hash
     (out / "04.executed.ipynb").write_text(text, encoding="utf-8")
-    print("Fresh-kernel notebook, invalid weights and missing-data blockade: PASS", flush=True)
+    print("Fresh-kernel notebook, exact named allocation, disk save/reload and missing-data blockade: PASS", flush=True)
     spec = C.load_spec(ROOT / "config/v2/portfolios/mon_portefeuille_diversifie.json")
     panel = synthetic_panel(spec)
     result = C.simulate(spec, panel)

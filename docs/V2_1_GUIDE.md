@@ -2,6 +2,10 @@
 
 ## État de la livraison
 
+L'[audit du workflow et des six sources](V2_1_CUSTOM_WORKFLOW_AUDIT.md) vérifie la sauvegarde/relecture exacte sans données et détaille les obstacles restants. Le candidat capitalisant FR0007080973 a été absorbé en 2018 ; son successeur est passé au CAC 40 ESG le 21/03/2022. L'audit numérique des cinq autres séries ne suffit pas encore à les admettre au backtest.
+
+La [validation finale de publication](V2_1_RELEASE_VALIDATION.md) remplace le bilan logiciel initial de 109 tests ci-dessous : **111 tests réussis**, quatre notebooks vérifiés. Le dépôt canonique est `Trading/portfolio-optimization` ; aucun historique de performance personnalisé complet n'est ajouté par cette publication.
+
 Le moteur réutilisable, l'éditeur français, la sauvegarde JSON et les analyses sont disponibles. **Aucun backtest historique complet à six actifs n'est annoncé.** Le portefeuille « Mon portefeuille diversifié » reste EM 30 %, S&P 500 30 %, World 15 %, CAC 40 10 %, or 10 %, Bitcoin 5 %, sur 2014-10-01–2023-12-29, avec 100 000 € et rééquilibrage mensuel. Sa configuration est enregistrée dans `config/v2/portfolios/mon_portefeuille_diversifie.json`.
 
 Le CAC 40 à rendement total est manquant. Les cinq autres sources locales sont inventoriées mais encore en attente de vérifications indépendantes et de synchronisation temporelle. Aucun actif manquant n'est remplacé par des liquidités, un rendement nul ou un indice de prix ; les poids ne sont jamais renormalisés. Les simulations de validation utilisent uniquement des données artificielles clairement identifiées.
